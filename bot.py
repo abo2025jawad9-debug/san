@@ -1,5 +1,6 @@
 import ccxt
 import requests
+import time
 from datetime import datetime, timezone
 
 # ==========================================
@@ -51,7 +52,7 @@ def get_auto_proxy_exchange():
                 ex.set_sandbox_mode(True)
                 # الفحص القوي للبروكسي
                 ex.load_markets()
-                return ex, proxy_url # نرجع المنصة والبروكسي الذي نجح
+                return ex, proxy_url
                 
             except:
                 continue
@@ -138,12 +139,61 @@ def check_and_trade(ex, proxy_url):
         print(f"❌ حدث خطأ: {e}")
 
 # ==========================================
-# 5. التشغيل
+# 5. التشغيل الرئيسي - LOOP لمدة 30 دقيقة
 # ==========================================
 if __name__ == "__main__":
-    exchange, valid_proxy = get_auto_proxy_exchange()
-    if exchange is not None:
-        check_and_trade(exchange, valid_proxy)
-    else:
-        # إرسال تنبيه في حال فشل كل البروكسيات
-        send_telegram_message("🚨 <b>تحذير:</b> البوت لم يتمكن من العثور على أي بروكسي يعمل لتخطي الحظر في هذه الدورة. سيتم المحاولة مجدداً بعد 5 دقائق.")
+    DURATION_MINUTES = 30      # مدة التشغيل الكلية
+    INTERVAL_MINUTES = 10      # الفاصل بين كل دورة
+    
+    start_time = time.time()
+    duration_seconds = DURATION_MINUTES * 60
+    interval_seconds = INTERVAL_MINUTES * 60
+    
+    print(f"🚀 بدء التشغيل لمدة {DURATION_MINUTES} دقيقة")
+    print(f"⏱️  كل {INTERVAL_MINUTES} دقائق ستُعاد العمليات")
+    print(f"🕒 الوقت الآن: {datetime.now(timezone.utc).strftime('%H:%M:%S UTC')}")
+    
+    # إرسال إشعار بدء التشغيل
+    send_telegram_message(
+        f"🚀 <b>بدأت دورة البوت</b>\n"
+        f"⏱️ المدة: {DURATION_MINUTES} دقيقة\n"
+        f"🔄 تكرار كل: {INTERVAL_MINUTES} دقائق\n"
+        f"🕒 الوقت: {datetime.now(timezone.utc).strftime('%H:%M:%S UTC')}"
+    )
+    
+    cycle_number = 1
+    
+    while time.time() - start_time < duration_seconds:
+        print(f"\n{'='*60}")
+        print(f"🔄 الدورة رقم {cycle_number} - {datetime.now(timezone.utc).strftime('%H:%M:%S')}")
+        print(f"{'='*60}")
+        
+        exchange, valid_proxy = get_auto_proxy_exchange()
+        if exchange is not None:
+            check_and_trade(exchange, valid_proxy)
+        else:
+            send_telegram_message("🚨 <b>تحذير:</b> البوت لم يتمكن من العثور على أي بروكسي يعمل في هذه الدورة.")
+            print("❌ فشل الاتصال بجميع البروكسيات.")
+        
+        # حساب الوقت المتبقي حتى الدورة القادمة
+        elapsed = time.time() - start_time
+        next_cycle_time = ((elapsed // interval_seconds) + 1) * interval_seconds
+        wait_seconds = next_cycle_time - elapsed
+        
+        # إذا كان الوقت المتبقي أقل من الفاصل، ننتظر حتى النهاية
+        if wait_seconds > 0 and elapsed + wait_seconds <= duration_seconds:
+            print(f"💤 انتظار {wait_seconds/60:.0f} دقيقة حتى الدورة التالية...")
+            time.sleep(wait_seconds)
+            cycle_number += 1
+        else:
+            break
+    
+    # نهاية التشغيل
+    end_msg = (
+        f"✅ <b>انتهت دورة البوت</b>\n"
+        f"⏱️ تم تشغيل {cycle_number} دورة/دورات خلال {DURATION_MINUTES} دقيقة\n"
+        f"🕒 الوقت: {datetime.now(timezone.utc).strftime('%H:%M:%S UTC')}\n"
+        f"💤 سيتم إعادة التشغيل تلقائياً في الجدولة القادمة."
+    )
+    send_telegram_message(end_msg)
+    print(f"\n✅ انتهت مدة التشغيل ({DURATION_MINUTES} دقيقة).")
