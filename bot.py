@@ -3,23 +3,38 @@ import requests
 from datetime import datetime, timezone
 
 # ==========================================
-# 1. إعداد مفاتيح API
+# 1. إعداد مفاتيح API (بينانس و تليجرام)
 # ==========================================
 api_key = 'dmyc2X0llvZ1A1zGAy9wfkqJHqZC20Uv04iYwBmOrnBMLJlnH7SZOsPt4eYGYnoJ'.strip()
 secret = 'uVax1wfQo0Ns1XIhGgsW4j2yjgB9VPlQWYzWvt1sAeg640WpGRCSqFMPvVyNtu6S'.strip()
 
+# ---- معلومات تليجرام الخاصة بك ----
+TELEGRAM_TOKEN = '8777604170:AAGVQWj7KtRZWKjZQ0BuyIZCHJ3FCmFgQP4'
+TELEGRAM_CHAT_ID = '6390985342'
+# --------------------------------
+
+def send_telegram_message(message):
+    """دالة لإرسال الرسائل إلى تليجرام"""
+    try:
+        url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+        payload = {
+            'chat_id': TELEGRAM_CHAT_ID,
+            'text': message,
+            'parse_mode': 'HTML'
+        }
+        requests.post(url, json=payload, timeout=10)
+    except Exception as e:
+        print(f"❌ فشل إرسال رسالة تليجرام: {e}")
+
 # ==========================================
-# 2. دالة الجلب التلقائي للبروكسيات من الإنترنت
+# 2. دالة الجلب التلقائي للبروكسيات
 # ==========================================
 def get_auto_proxy_exchange():
-    print("🌐 جاري سحب أحدث البروكسيات المجانية من الإنترنت تلقائياً...")
+    print("🌐 جاري سحب أحدث البروكسيات...")
     try:
         url = "https://raw.githubusercontent.com/TheSpeedX/PROXY-List/master/http.txt"
         response = requests.get(url, timeout=10)
-        
-        # سحبنا 150 بروكسي لزيادة فرص العثور على واحد قوي
         proxies_list = response.text.split('\n')[:150] 
-        print(f"✅ تم جلب {len(proxies_list)} بروكسي بنجاح! جاري فحصها لتخطي الحظر...")
 
         for p in proxies_list:
             if not p.strip(): continue
@@ -30,32 +45,21 @@ def get_auto_proxy_exchange():
                     'apiKey': api_key, 
                     'secret': secret, 
                     'enableRateLimit': True,
-                    'proxies': {
-                        'http': proxy_url,
-                        'https': proxy_url,
-                    },
-                    'options': {
-                        'defaultType': 'spot', # إجبار البوت على سوق السبوت فقط
-                        'warnOnFetchOpenOrdersWithoutSymbol': False
-                    }
+                    'proxies': {'http': proxy_url, 'https': proxy_url},
+                    'options': {'defaultType': 'spot', 'warnOnFetchOpenOrdersWithoutSymbol': False}
                 })
                 ex.set_sandbox_mode(True)
-                
-                # الفحص القوي: نطلب من البروكسي تحميل الأسواق بالكامل
-                # إذا تجاوز هذه الخطوة، فهو بروكسي قوي ولن يفصل أثناء التداول
+                # الفحص القوي للبروكسي
                 ex.load_markets()
-                print(f"🎉 عظيم! تم العثور على بروكسي قوي يعمل وتخطي الحظر بنجاح: {proxy_url}")
-                return ex 
+                return ex, proxy_url # نرجع المنصة والبروكسي الذي نجح
                 
             except:
-                # البروكسي ضعيف أو محظور، ننتقل للذي بعده بصمت
                 continue
                 
     except Exception as e:
-        print(f"❌ خطأ في نظام سحب البروكسيات: {e}")
+        print(f"❌ خطأ في سحب البروكسيات: {e}")
         
-    print("🚨 فشلت كل المحاولات. يبدو أن جميع البروكسيات مسدودة حالياً.")
-    return None
+    return None, None
 
 # ==========================================
 # 3. جدول المواعيد والإشارات
@@ -82,45 +86,64 @@ schedule = [
 ]
 
 # ==========================================
-# 4. دالة التداول الرئيسية
+# 4. دالة التداول الرئيسية وبناء التقرير
 # ==========================================
-def check_and_trade(ex):
+def check_and_trade(ex, proxy_url):
+    now_utc = datetime.now(timezone.utc)
+    time_str = now_utc.strftime('%Y-%m-%d %H:%M')
+    
+    # بداية بناء رسالة التليجرام
+    telegram_msg = f"🤖 <b>تقرير البوت:</b>\n"
+    telegram_msg += f"🕒 الوقت: {time_str} UTC\n"
+    telegram_msg += f"✅ تم تخطي الحظر وتوصيل السيرفر\n"
+    
     try:
-        now_utc = datetime.now(timezone.utc)
-        print(f"وقت الفحص الحالي (UTC): {now_utc.strftime('%Y-%m-%d %H:%M')}")
-        
         ticker = ex.fetch_ticker('BTC/USDT')
         current_price = ticker['last']
+        telegram_msg += f"💰 سعر البتكوين الحالي: {current_price}$\n"
         
+        signal_found = False
         for signal in schedule:
             signal_time = datetime.strptime(signal["time"], '%Y-%m-%d %H:%M').replace(tzinfo=timezone.utc)
             time_diff = abs((now_utc - signal_time).total_seconds())
             
             if time_diff <= 300: # 5 دقائق
-                print(f"تم العثور على إشارة متطابقة: {signal['type']} في الموعد {signal['time']}")
+                signal_found = True
+                telegram_msg += f"⚠️ <b>تم العثور على إشارة:</b> {signal['type']} (موعد: {signal['time']})\n"
+                
                 ohlcv = ex.fetch_ohlcv('BTC/USDT', timeframe='1h', limit=2)
                 price_1h_ago = ohlcv[0][4]
-                print(f"السعر الحالي: {current_price} | السعر قبل ساعة: {price_1h_ago}")
+                telegram_msg += f"السعر قبل ساعة: {price_1h_ago}$\n"
                 
                 if "نزول" in signal["type"] and current_price < price_1h_ago:
-                    print("تأكيد النزول المستهدف. شراء...")
                     ex.create_market_buy_order('BTC/USDT', 0.001)
+                    telegram_msg += "✅ <b>القرار:</b> تم تنفيذ صفقة شراء بنجاح (نزول مؤكد)!\n"
                 elif "صعود" in signal["type"] and current_price <= price_1h_ago:
-                    print("تأكيد نقطة انطلاق الصعود. شراء...")
                     ex.create_market_buy_order('BTC/USDT', 0.001)
+                    telegram_msg += "✅ <b>القرار:</b> تم تنفيذ صفقة شراء بنجاح (صعود مؤكد)!\n"
                 else:
-                    print("الشروط الفنية لم تتحقق، تم إلغاء الصفقة مؤقتاً لحمايتك.")
-                return
+                    telegram_msg += "🚫 <b>القرار:</b> تم إلغاء الصفقة مؤقتاً، الشروط الفنية لم تتحقق للحماية.\n"
+                break
+                
+        if not signal_found:
+            telegram_msg += "💤 لا توجد صفقات مجدولة تتطابق مع هذا الوقت.\n"
 
-        print("لا توجد إشارات مجدولة في هذا الوقت الحالي.")
+        # إرسال التقرير النهائي إلى تليجرام
+        send_telegram_message(telegram_msg)
+        print("✅ تم إرسال التقرير إلى تليجرام بنجاح.")
 
     except Exception as e:
-        print(f"❌ حدث خطأ أثناء تنفيذ التداول: {e}")
+        error_msg = f"🚨 <b>حدث خطأ أثناء فحص السوق:</b>\n{e}"
+        send_telegram_message(error_msg)
+        print(f"❌ حدث خطأ: {e}")
 
 # ==========================================
 # 5. التشغيل
 # ==========================================
 if __name__ == "__main__":
-    exchange = get_auto_proxy_exchange()
+    exchange, valid_proxy = get_auto_proxy_exchange()
     if exchange is not None:
-        check_and_trade(exchange)
+        check_and_trade(exchange, valid_proxy)
+    else:
+        # إرسال تنبيه في حال فشل كل البروكسيات
+        send_telegram_message("🚨 <b>تحذير:</b> البوت لم يتمكن من العثور على أي بروكسي يعمل لتخطي الحظر في هذه الدورة. سيتم المحاولة مجدداً بعد 5 دقائق.")
