@@ -14,12 +14,11 @@ secret = 'uVax1wfQo0Ns1XIhGgsW4j2yjgB9VPlQWYzWvt1sAeg640WpGRCSqFMPvVyNtu6S'.stri
 def get_auto_proxy_exchange():
     print("🌐 جاري سحب أحدث البروكسيات المجانية من الإنترنت تلقائياً...")
     try:
-        # سحب قائمة بروكسيات محدثة لحظياً من مستودعات موثوقة
         url = "https://raw.githubusercontent.com/TheSpeedX/PROXY-List/master/http.txt"
         response = requests.get(url, timeout=10)
         
-        # نأخذ أول 100 بروكسي للتجربة
-        proxies_list = response.text.split('\n')[:100] 
+        # سحبنا 150 بروكسي لزيادة فرص العثور على واحد قوي
+        proxies_list = response.text.split('\n')[:150] 
         print(f"✅ تم جلب {len(proxies_list)} بروكسي بنجاح! جاري فحصها لتخطي الحظر...")
 
         for p in proxies_list:
@@ -35,18 +34,21 @@ def get_auto_proxy_exchange():
                         'http': proxy_url,
                         'https': proxy_url,
                     },
-                    'options': {'defaultType': 'spot'},
-                    'urls': {'api': {'public': 'https://testnet.binance.vision/api/v3', 'private': 'https://testnet.binance.vision/api/v3'}}
+                    'options': {
+                        'defaultType': 'spot', # إجبار البوت على سوق السبوت فقط
+                        'warnOnFetchOpenOrdersWithoutSymbol': False
+                    }
                 })
                 ex.set_sandbox_mode(True)
                 
-                # إرسال طلب سريع لبينانس للتأكد أن البروكسي غير محظور ويعمل
-                ex.fetch_time()
-                print(f"🎉 عظيم! تم العثور على بروكسي يعمل وتخطي الحظر بنجاح: {proxy_url}")
-                return ex  # إرجاع المنصة الجاهزة للعمل
+                # الفحص القوي: نطلب من البروكسي تحميل الأسواق بالكامل
+                # إذا تجاوز هذه الخطوة، فهو بروكسي قوي ولن يفصل أثناء التداول
+                ex.load_markets()
+                print(f"🎉 عظيم! تم العثور على بروكسي قوي يعمل وتخطي الحظر بنجاح: {proxy_url}")
+                return ex 
                 
             except:
-                # إذا كان البروكسي محظوراً أو ميتاً، نتجاهله بصمت ونجرب الذي بعده
+                # البروكسي ضعيف أو محظور، ننتقل للذي بعده بصمت
                 continue
                 
     except Exception as e:
@@ -119,9 +121,6 @@ def check_and_trade(ex):
 # 5. التشغيل
 # ==========================================
 if __name__ == "__main__":
-    # تشغيل نظام جلب البروكسي التلقائي أولاً
     exchange = get_auto_proxy_exchange()
-    
-    # إذا وجدنا بروكسي يعمل، نقوم بتشغيل التداول
     if exchange is not None:
         check_and_trade(exchange)
