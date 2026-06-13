@@ -19,7 +19,8 @@ jobs:
 
     - name: Install Libraries
       run: |
-        pip install ccxt requests aiohttp
+        python -m pip install --upgrade pip
+        pip install ccxt requests
 
     - name: Run Bot
       run: python bot.py
