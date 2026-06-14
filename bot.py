@@ -20,7 +20,7 @@ TELEGRAM_CHAT_ID = '6390985342'
 MAX_BUYS = 7
 MAX_TOTAL_USDT = 50
 TRADE_USDT_PER_BUY = MAX_TOTAL_USDT // MAX_BUYS
-DURATION_MINUTES = 360
+DURATION_MINUTES = 180
 CHECK_INTERVAL = 60
 MIN_BTC_AMOUNT = 0.0001
 STATE_FILE = 'state.json'
@@ -50,7 +50,7 @@ def load_state():
         'open_positions': [],
         'buy_count': 0,
         'total_usdt_spent': 0.0,
-        'processed_signals': [],
+        'processed_signals': [],  # فقط الإشارات التي تم شراؤها بنجاح
         'total_profit': 0.0,
         'total_loss': 0.0,
         'trades_history': []
@@ -59,10 +59,26 @@ def load_state():
 def save_state(state):
     with open(STATE_FILE, 'w') as f:
         json.dump(state, f, indent=2)
-    print(f"💾 حفظ: {state['buy_count']} شراء | {len(state['open_positions'])} مفتوحة")
 
 # ==========================================
-# 4. بروكسيات
+# 4. تنظيف الإشارات القديمة
+# ==========================================
+def clean_old_signals(state):
+    """يمسح الإشارات التي مرّ تاريخها من processed_signals"""
+    now = datetime.now(timezone.utc)
+    kept = []
+    for sig_time_str in state['processed_signals']:
+        try:
+            sig_time = datetime.strptime(sig_time_str, '%Y-%m-%d %H:%M').replace(tzinfo=timezone.utc)
+            if sig_time > now:
+                kept.append(sig_time_str)
+        except:
+            pass
+    state['processed_signals'] = kept
+    return state
+
+# ==========================================
+# 5. بروكسيات
 # ==========================================
 def get_auto_proxy_exchange():
     print("🌐 جاري سحب البروكسيات...")
@@ -90,48 +106,31 @@ def get_auto_proxy_exchange():
     return None, None
 
 # ==========================================
-# 5. جدول الإشارات
+# 6. جدول الإشارات
 # ==========================================
 schedule = [
-
- 
-    {"time": "2026-06-02 05:29", "type": "نزول"},
-    {"time": "2026-06-02 11:29", "type": "نزول"},
-    {"time": "2026-06-02 18:59", "type": "صعود ونزول"},
-    {"time": "2026-06-03 11:59", "type": "نزول"},
-    {"time": "2026-06-04 18:29", "type": "صعود"},
-    {"time": "2026-06-06 01:29", "type": "نزول"},
-    {"time": "2026-06-06 11:29", "type": "نزول"},
-    {"time": "2026-06-07 00:29", "type": "نزول"},
-    {"time": "2026-06-07 05:29", "type": "نزول"},
-    {"time": "2026-06-07 11:29", "type": "نزول"},
-    {"time": "2026-06-08 00:29", "type": "نزول"},
-    {"time": "2026-06-08 11:29", "type": "نزول"},
-    {"time": "2026-06-08 15:29", "type": "صعود"},
-    {"time": "2026-06-09 00:29", "type": "نزول"},
-    {"time": "2026-06-09 11:29", "type": "نزول"},
-    {"time": "2026-06-09 12:59", "type": "صعود"},
-    {"time": "2026-06-10 00:29", "type": "نزول"},
-    {"time": "2026-06-10 11:29", "type": "نزول"},
-    {"time": "2026-06-10 15:29", "type": "نزول"},
-    {"time": "2026-06-11 00:29", "type": "نزول"},
-    {"time": "2026-06-11 11:29", "type": "نزول"},
-    {"time": "2026-06-11 16:59", "type": "صعود ونزول"},
-    {"time": "2026-06-12 00:29", "type": "نزول"},
-    {"time": "2026-06-12 07:59", "type": "نزول"},
-    {"time": "2026-06-12 11:59", "type": "نزول"},
-    {"time": "2026-06-13 00:59", "type": "نزول"},
     {"time": "2026-06-13 11:59", "type": "نزول"},
     {"time": "2026-06-14 00:59", "type": "نزول"},
     {"time": "2026-06-14 10:29", "type": "نزول"},
     {"time": "2026-06-14 11:59", "type": "نزول"},
     {"time": "2026-06-14 21:00", "type": "نزول"},
-    {"time": "2026-06-15 00:59", "type": "نزول"}
-
+    {"time": "2026-06-15 00:00", "type": "نزول"},
+    {"time": "2026-06-15 00:59", "type": "نزول"},
+    {"time": "2026-06-15 16:59", "type": "صعود ونزول"},
+    {"time": "2026-06-15 22:59", "type": "صعود"},
+    {"time": "2026-06-16 00:59", "type": "صعود"},
+    {"time": "2026-06-16 16:29", "type": "نزول"},
+    {"time": "2026-06-17 16:59", "type": "صعود"},
+    {"time": "2026-06-18 12:59", "type": "صعود"},
+    {"time": "2026-06-19 19:59", "type": "نزول"},
+    {"time": "2026-06-22 02:59", "type": "صعود"},
+    {"time": "2026-06-23 07:59", "type": "نزول"},
+    {"time": "2026-06-24 13:29", "type": "نزول"},
+    {"time": "2026-06-24 21:59", "type": "صعود"}
 ]
 
 # ==========================================
-# 6. إيجاد أقرب موعد إشارة
+# 7. إيجاد أقرب موعد إشارة
 # ==========================================
 def get_next_signal():
     now = datetime.now(timezone.utc)
@@ -154,7 +153,7 @@ def get_next_signal():
     return next_time.strftime('%Y-%m-%d %H:%M'), next_type, time_str
 
 # ==========================================
-# 7. البيع (مع التأكد من الربح + تقرير)
+# 8. البيع (مع التأكد من الربح + تقرير)
 # ==========================================
 def check_sell(ex, current_price, time_str, state):
     sold_any = False
@@ -195,31 +194,42 @@ def check_sell(ex, current_price, time_str, state):
     return sold_any
 
 # ==========================================
-# 8. الشراء (مع تقرير كامل)
+# 9. الشراء (المُصلح - لا يضيف إلى processed_signals إلا عند النجاح)
 # ==========================================
+# متغير مؤقت لمعرفة أي إشارات تم فحصها ورفضت (لا يُحفظ)
+checked_signals_current_run = set()
+
 def check_buy(ex, now, time_str, state):
     if state['buy_count'] >= MAX_BUYS:
         return False
+    
     for signal in schedule:
         signal_time = datetime.strptime(signal["time"], '%Y-%m-%d %H:%M').replace(tzinfo=timezone.utc)
         time_diff = abs((now - signal_time).total_seconds())
+        
+        # نافذة 5 دقائق
         if time_diff <= 300:
+            # إذا تم شراؤها سابقاً، تخطى
             if signal["time"] in state['processed_signals']:
                 continue
+            
             try:
                 ohlcv = ex.fetch_ohlcv('BTC/USDT', timeframe='1h', limit=3)
                 price_1h_ago = ohlcv[-2][4]
                 ticker = ex.fetch_ticker('BTC/USDT')
                 current_price = ticker['last']
                 
-                # تقرير فحص الإشارة
-                check_msg = (f"🔍 <b>فحص إشارة: {signal['time']}</b>\n"
-                            f"⚠️ النوع: {signal['type']}\n"
-                            f"📊 السعر قبل ساعة: {price_1h_ago:.2f} USDT\n"
-                            f"💰 السعر الحالي: {current_price:.2f} USDT\n"
-                            f"🕒 {time_str}")
-                send_telegram_message(check_msg)
+                # إرسال تقرير فحص الإشارة مرة واحدة فقط لكل إشارة في هذه الدورة
+                if signal["time"] not in checked_signals_current_run:
+                    check_msg = (f"🔍 <b>فحص إشارة: {signal['time']}</b>\n"
+                               f"⚠️ النوع: {signal['type']}\n"
+                               f"📊 السعر قبل ساعة: {price_1h_ago:.2f} USDT\n"
+                               f"💰 السعر الحالي: {current_price:.2f} USDT\n"
+                               f"🕒 {time_str}")
+                    send_telegram_message(check_msg)
+                    checked_signals_current_run.add(signal["time"])
                 
+                # شرط الشراء: السعر قبل ساعة أعلى من الحالي (السعر نازل)
                 if price_1h_ago > current_price:
                     amount = TRADE_USDT_PER_BUY / current_price
                     if amount < MIN_BTC_AMOUNT:
@@ -232,8 +242,7 @@ def check_buy(ex, now, time_str, state):
                               f"💵 المنفق: {state['total_usdt_spent']:.2f} USDT\n"
                               f"🕒 {time_str}")
                         send_telegram_message(msg)
-                        state['processed_signals'].append(signal["time"])
-                        return False
+                        return False  # لا نضيف إلى processed_signals - قد نحاول في الدورة القادمة
                     
                     ex.create_market_buy_order('BTC/USDT', amount)
                     state['buy_count'] += 1
@@ -241,6 +250,8 @@ def check_buy(ex, now, time_str, state):
                     state['open_positions'].append({
                         'price': current_price, 'amount': amount, 'signal_time': signal["time"]
                     })
+                    
+                    # ✅ نضيف إلى processed_signals فقط عند الشراء الناجح
                     state['processed_signals'].append(signal["time"])
                     
                     state['trades_history'].append({
@@ -264,12 +275,16 @@ def check_buy(ex, now, time_str, state):
                     print(f"✅ شراء #{state['buy_count']} بسعر {current_price:.2f}$")
                     return True
                 else:
-                    msg = (f"🚫 <b>تم رفض الشراء</b>\n"
-                          f"السعر قبل ساعة ({price_1h_ago:.2f}) ليس أعلى من الحالي ({current_price:.2f})\n"
-                          f"🕒 {time_str}")
-                    send_telegram_message(msg)
-                    state['processed_signals'].append(signal["time"])
+                    # ❌ لا نضيف إلى processed_signals - سنعيد المحاولة في الـ Tick التالي
+                    if signal["time"] not in checked_signals_current_run:
+                        msg = (f"🚫 <b>شرط الشراء غير متحقق</b>\n"
+                              f"السعر قبل ساعة ({price_1h_ago:.2f}) ليس أعلى من الحالي ({current_price:.2f})\n"
+                              f"سيتم إعادة المحاولة في الفحص التالي...\n"
+                              f"🕒 {time_str}")
+                        send_telegram_message(msg)
+                    print(f"🚫 شرط غير متحقق: {price_1h_ago:.2f} vs {current_price:.2f} - إعادة المحاولة لاحقاً")
                     return False
+                    
             except Exception as e:
                 msg = f"❌ <b>خطأ في معالجة إشارة {signal['time']}:</b>\n{e}\n🕒 {time_str}"
                 send_telegram_message(msg)
@@ -277,7 +292,7 @@ def check_buy(ex, now, time_str, state):
     return False
 
 # ==========================================
-# 9. التقرير الدوري (كل 10 دقائق)
+# 10. التقرير الدوري (كل 10 دقائق)
 # ==========================================
 def send_status_report(tick_num, time_str, elapsed_min, current_price, state, next_signal_info):
     next_time, next_type, next_diff = next_signal_info
@@ -323,7 +338,7 @@ def send_status_report(tick_num, time_str, elapsed_min, current_price, state, ne
     send_telegram_message(msg)
 
 # ==========================================
-# 10. التشغيل الرئيسي (3 ساعات)
+# 11. التشغيل الرئيسي (3 ساعات)
 # ==========================================
 if __name__ == "__main__":
     exchange, valid_proxy = get_auto_proxy_exchange()
@@ -332,6 +347,10 @@ if __name__ == "__main__":
         exit(1)
     
     state = load_state()
+    
+    # ✅ تنظيف الإشارات القديمة (التي مرّ تاريخها) من processed_signals
+    state = clean_old_signals(state)
+    
     start_time = time.time()
     duration = DURATION_MINUTES * 60
     
@@ -346,7 +365,7 @@ if __name__ == "__main__":
         f"🕒 {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC')}"
     )
     
-    print(f"🚀 بدء 3 ساعات | Positions: {len(state['open_positions'])}")
+    print(f"🚀 بدء 3 ساعات | Positions: {len(state['open_positions'])} | processed: {state['processed_signals']}")
     
     cycle = 0
     while time.time() - start_time < duration:
@@ -373,7 +392,7 @@ if __name__ == "__main__":
                 if check_buy(exchange, now, time_str, state):
                     save_state(state)
             
-            # 3. التقرير الدوري كل 10 دقائق فقط (Tick #10, #20, #30...)
+            # 3. التقرير الدوري كل 10 دقائق
             if cycle % 10 == 0:
                 next_signal_info = get_next_signal()
                 send_status_report(cycle, time_str, elapsed, current_price, state, next_signal_info)
@@ -384,11 +403,9 @@ if __name__ == "__main__":
             
         except Exception as e:
             print(f"❌ خطأ Tick: {e}")
-            # إرسال خطأ فوري فقط إذا كان خطأً حرجاً (كل 10 دقائق أيضاً)
             if cycle % 10 == 0:
                 send_telegram_message(f"⚠️ <b>خطأ في Tick #{cycle}:</b>\n{e}\n🕒 {time_str}")
         
-        # انتظار
         remaining = duration - (time.time() - start_time)
         if remaining > 0:
             sleep_time = min(CHECK_INTERVAL, remaining)
@@ -429,7 +446,6 @@ if __name__ == "__main__":
     
     save_state(state)
     
-    # التقرير النهائي
     total_trades = len([t for t in state['trades_history'] if t['type'] in ('sell_profit', 'sell_final')])
     net_pnl = state['total_profit'] - state['total_loss']
     net_emoji = "🟢" if net_pnl >= 0 else "🔴"
@@ -449,3 +465,4 @@ if __name__ == "__main__":
     )
     send_telegram_message(final_msg)
     print(f"✅ انتهى | ربح: {state['total_profit']:.4f} | خسارة: {state['total_loss']:.4f} | صافي: {net_pnl:.4f}")
+
