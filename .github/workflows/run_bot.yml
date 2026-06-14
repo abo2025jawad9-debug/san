@@ -2,8 +2,11 @@ name: Crypto Trading Bot
 
 on:
   schedule:
-    - cron: '0 * * * *'
+    - cron: '0 */4 * * *'   # كل 4 ساعات: 3 عمل + 1 راحة
   workflow_dispatch:
+
+permissions:
+  contents: write
 
 concurrency:
   group: crypto-bot
@@ -12,7 +15,7 @@ concurrency:
 jobs:
   trade:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 180
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
@@ -29,3 +32,12 @@ jobs:
 
       - name: Run Bot
         run: python bot.py
+
+      - name: Save State
+        if: always()
+        run: |
+          git config user.name "github-actions"
+          git config user.email "actions@github.com"
+          git add state.json
+          git diff --cached --quiet || git commit -m "Update bot state [skip ci]"
+          git push || echo "Nothing to commit"
