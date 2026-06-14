@@ -50,13 +50,16 @@ def load_state():
         'open_positions': [],
         'buy_count': 0,
         'total_usdt_spent': 0.0,
-        'processed_signals': []
+        'processed_signals': [],
+        'total_profit': 0.0,
+        'total_loss': 0.0,
+        'trades_history': []
     }
 
 def save_state(state):
     with open(STATE_FILE, 'w') as f:
         json.dump(state, f, indent=2)
-    print(f"💾 تم حفظ الحالة: {state['buy_count']} شراء | {len(state['open_positions'])} مفتوحة")
+    print(f"💾 حفظ: {state['buy_count']} شراء | {len(state['open_positions'])} مفتوحة")
 
 # ==========================================
 # 4. بروكسيات
@@ -111,7 +114,30 @@ schedule = [
 ]
 
 # ==========================================
-# 6. البيع (مع التأكد من الربح)
+# 6. إيجاد أقرب موعد إشارة
+# ==========================================
+def get_next_signal():
+    now = datetime.now(timezone.utc)
+    future_signals = []
+    for signal in schedule:
+        signal_time = datetime.strptime(signal["time"], '%Y-%m-%d %H:%M').replace(tzinfo=timezone.utc)
+        if signal_time > now:
+            future_signals.append((signal_time, signal["type"]))
+    
+    if not future_signals:
+        return None, None, None
+    
+    future_signals.sort(key=lambda x: x[0])
+    next_time, next_type = future_signals[0]
+    time_diff = next_time - now
+    hours = time_diff.seconds // 3600
+    minutes = (time_diff.seconds % 3600) // 60
+    time_str = f"{hours} ساعة و {minutes} دقيقة" if hours > 0 else f"{minutes} دقيقة"
+    
+    return next_time.strftime('%Y-%m-%d %H:%M'), next_type, time_str
+
+# ==========================================
+# 7. البيع (مع التأكد من الربح + تقرير)
 # ==========================================
 def check_sell(ex, current_price, time_str, state):
     sold_any = False
@@ -122,9 +148,24 @@ def check_sell(ex, current_price, time_str, state):
             try:
                 ex.create_market_sell_order('BTC/USDT', amount)
                 profit = (current_price - entry_price) * amount
-                msg = (f"✅ <b>بيع بربح!</b>\n"
-                       f"💰 شراء: {entry_price:.2f}$ | بيع: {current_price:.2f}$\n"
-                       f"📦 {amount:.6f} BTC | ربح: {profit:.4f} USDT\n🕒 {time_str}")
+                state['total_profit'] += profit
+                
+                state['trades_history'].append({
+                    'type': 'sell_profit',
+                    'buy_price': entry_price,
+                    'sell_price': current_price,
+                    'amount': amount,
+                    'profit': profit,
+                    'time': time_str
+                })
+                
+                msg = (f"🎉 <b>✅ بيع ناجح بربح!</b>\n\n"
+                       f"💰 سعر الشراء: {entry_price:.2f} USDT\n"
+                       f"💰 سعر البيع: {current_price:.2f} USDT\n"
+                       f"📦 الكمية: {amount:.6f} BTC\n"
+                       f"📊 <b>الربح: +{profit:.4f} USDT</b> 🟢\n"
+                       f"💵 إجمالي الأرباح: {state['total_profit']:.4f} USDT\n"
+                       f"🕒 {time_str}")
                 send_telegram_message(msg)
                 print(f"✅ بيع بربح: {profit:.4f} USDT")
                 state['open_positions'].remove(pos)
@@ -132,11 +173,12 @@ def check_sell(ex, current_price, time_str, state):
             except Exception as e:
                 print(f"❌ فشل بيع: {e}")
         else:
-            print(f"⏳ Position: شراء {entry_price:.2f}$ | حالي {current_price:.2f}$ (لا ربح)")
+            loss = (entry_price - current_price) * amount
+            print(f"⏳ Position: شراء {entry_price:.2f}$ | حالي {current_price:.2f}$ (خسارة محتملة: {loss:.4f} USDT)")
     return sold_any
 
 # ==========================================
-# 7. الشراء (السعر قبل ساعة أعلى من الحالي)
+# 8. الشراء (مع تقرير كامل)
 # ==========================================
 def check_buy(ex, now, time_str, state):
     if state['buy_count'] >= MAX_BUYS:
@@ -152,7 +194,14 @@ def check_buy(ex, now, time_str, state):
                 price_1h_ago = ohlcv[-2][4]
                 ticker = ex.fetch_ticker('BTC/USDT')
                 current_price = ticker['last']
-                print(f"📊 {signal['time']} | قبل ساعة: {price_1h_ago:.2f}$ | حالي: {current_price:.2f}$")
+                
+                # تقرير فحص الإشارة
+                check_msg = (f"🔍 <b>فحص إشارة: {signal['time']}</b>\n"
+                            f"⚠️ النوع: {signal['type']}\n"
+                            f"📊 السعر قبل ساعة: {price_1h_ago:.2f} USDT\n"
+                            f"💰 السعر الحالي: {current_price:.2f} USDT\n"
+                            f"🕒 {time_str}")
+                send_telegram_message(check_msg)
                 
                 if price_1h_ago > current_price:
                     amount = TRADE_USDT_PER_BUY / current_price
@@ -161,6 +210,11 @@ def check_buy(ex, now, time_str, state):
                     actual_usdt = amount * current_price
                     
                     if state['total_usdt_spent'] + actual_usdt > MAX_TOTAL_USDT:
+                        msg = (f"⛔ <b>تم إلغاء الشراء</b>\n"
+                              f"سيتجاوز الحد الإجمالي ({MAX_TOTAL_USDT} USDT)\n"
+                              f"💵 المنفق: {state['total_usdt_spent']:.2f} USDT\n"
+                              f"🕒 {time_str}")
+                        send_telegram_message(msg)
                         state['processed_signals'].append(signal["time"])
                         return False
                     
@@ -172,44 +226,110 @@ def check_buy(ex, now, time_str, state):
                     })
                     state['processed_signals'].append(signal["time"])
                     
-                    msg = (f"🟢 <b>شراء #{state['buy_count']}</b>\n"
-                           f"⚠️ {signal['type']} | 💰 {current_price:.2f} USDT\n"
-                           f"📦 {amount:.6f} BTC | 💵 {actual_usdt:.2f} USDT\n"
-                           f"📊 إجمالي: {state['total_usdt_spent']:.2f}/{MAX_TOTAL_USDT} USDT\n"
-                           f"🔢 متبقي: {MAX_BUYS - state['buy_count']} | 🕒 {time_str}")
+                    state['trades_history'].append({
+                        'type': 'buy',
+                        'price': current_price,
+                        'amount': amount,
+                        'usdt': actual_usdt,
+                        'time': time_str
+                    })
+                    
+                    msg = (f"🟢 <b>✅ شراء ناجح #{state['buy_count']}</b>\n\n"
+                           f"⚠️ الإشارة: {signal['type']}\n"
+                           f"💰 السعر الحالي: {current_price:.2f} USDT\n"
+                           f"📊 السعر قبل ساعة: {price_1h_ago:.2f} USDT\n"
+                           f"📦 الكمية: {amount:.6f} BTC\n"
+                           f"💵 المبلغ: {actual_usdt:.2f} USDT\n"
+                           f"📊 إجمالي منفق: {state['total_usdt_spent']:.2f}/{MAX_TOTAL_USDT} USDT\n"
+                           f"🔢 المتبقي: {MAX_BUYS - state['buy_count']} عمليات\n"
+                           f"🕒 {time_str}")
                     send_telegram_message(msg)
                     print(f"✅ شراء #{state['buy_count']} بسعر {current_price:.2f}$")
                     return True
                 else:
-                    print(f"🚫 شرط غير متحقق")
+                    msg = (f"🚫 <b>تم رفض الشراء</b>\n"
+                          f"السعر قبل ساعة ({price_1h_ago:.2f}) ليس أعلى من الحالي ({current_price:.2f})\n"
+                          f"🕒 {time_str}")
+                    send_telegram_message(msg)
                     state['processed_signals'].append(signal["time"])
                     return False
             except Exception as e:
-                print(f"❌ خطأ شراء: {e}")
+                msg = f"❌ <b>خطأ في معالجة إشارة {signal['time']}:</b>\n{e}\n🕒 {time_str}"
+                send_telegram_message(msg)
                 return False
     return False
 
 # ==========================================
-# 8. التشغيل الرئيسي (3 ساعات)
+# 9. التقرير الدوري (كل 10 دقائق)
+# ==========================================
+def send_status_report(tick_num, time_str, elapsed_min, current_price, state, next_signal_info):
+    next_time, next_type, next_diff = next_signal_info
+    
+    open_value = 0
+    unrealized_pnl = 0
+    for pos in state['open_positions']:
+        open_value += pos['amount'] * current_price
+        unrealized_pnl += (current_price - pos['price']) * pos['amount']
+    
+    pnl_emoji = "🟢" if unrealized_pnl >= 0 else "🔴"
+    pnl_text = f"+{unrealized_pnl:.4f}" if unrealized_pnl >= 0 else f"{unrealized_pnl:.4f}"
+    
+    msg = (f"📊 <b>تقرير الدورة #{tick_num}</b>\n\n"
+           f"🕒 الوقت: {time_str} | مضى: {elapsed_min:.0f} دقيقة\n"
+           f"💰 سعر BTC: {current_price:.2f} USDT\n\n"
+           f"📈 <b>الحالة:</b>\n"
+           f"🔢 عمليات شراء: {state['buy_count']}/{MAX_BUYS}\n"
+           f"📦 Positions مفتوحة: {len(state['open_positions'])}\n"
+           f"💵 قيمة المفتوحة: {open_value:.2f} USDT\n"
+           f"📊 ربح/خسارة غير محقق: {pnl_emoji} {pnl_text} USDT\n"
+           f"💰 إجمالي أرباح محققة: {state['total_profit']:.4f} USDT\n"
+           f"📉 إجمالي خسائر: {state['total_loss']:.4f} USDT\n"
+           f"💵 إجمالي منفق: {state['total_usdt_spent']:.2f}/{MAX_TOTAL_USDT} USDT\n\n")
+    
+    if next_time:
+        msg += (f"⏰ <b>أقرب إشارة قادمة:</b>\n"
+               f"📅 {next_time}\n"
+               f"⚠️ النوع: {next_type}\n"
+               f"⏳ بعد: {next_diff}\n\n")
+    else:
+        msg += "⏰ لا توجد إشارات مستقبلية في الجدول.\n\n"
+    
+    if state['open_positions']:
+        msg += "📋 <b>Positions المفتوحة:</b>\n"
+        for i, pos in enumerate(state['open_positions'], 1):
+            current_val = pos['amount'] * current_price
+            pnl = (current_price - pos['price']) * pos['amount']
+            pnl_em = "🟢" if pnl >= 0 else "🔴"
+            msg += (f"  #{i}: شراء {pos['price']:.2f}$ | حالي {current_price:.2f}$ | "
+                   f"{pnl_em} {pnl:.4f} USDT\n")
+    
+    send_telegram_message(msg)
+
+# ==========================================
+# 10. التشغيل الرئيسي (3 ساعات)
 # ==========================================
 if __name__ == "__main__":
     exchange, valid_proxy = get_auto_proxy_exchange()
     if exchange is None:
-        send_telegram_message("🚨 فشل الاتصال بجميع البروكسيات.")
+        send_telegram_message("🚨 <b>فشل الاتصال بجميع البروكسيات.</b> تم إيقاف البوت.")
         exit(1)
     
     state = load_state()
     start_time = time.time()
     duration = DURATION_MINUTES * 60
     
+    # إشعار البدء
+    next_time, next_type, next_diff = get_next_signal()
     send_telegram_message(
-        f"🚀 <b>بدأت الدورة (3 ساعات)</b>\n"
+        f"🚀 <b>بدأت دورة البوت (3 ساعات)</b>\n\n"
         f"📊 Positions سابقة: {len(state['open_positions'])}\n"
         f"💵 منفق سابق: {state['total_usdt_spent']:.2f} USDT\n"
-        f"🕒 {datetime.now(timezone.utc).strftime('%H:%M:%S UTC')}"
+        f"💰 أرباح سابقة: {state['total_profit']:.4f} USDT\n"
+        f"⏰ أقرب إشارة: {next_time or 'لا يوجد'} ({next_type or ''})\n"
+        f"🕒 {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC')}"
     )
     
-    print(f"🚀 بدء 3 ساعات | Positions سابقة: {len(state['open_positions'])}")
+    print(f"🚀 بدء 3 ساعات | Positions: {len(state['open_positions'])}")
     
     cycle = 0
     while time.time() - start_time < duration:
@@ -235,24 +355,31 @@ if __name__ == "__main__":
             if state['buy_count'] < MAX_BUYS:
                 if check_buy(exchange, now, time_str, state):
                     save_state(state)
-            else:
-                print(f"⛔ وصلنا للحد ({MAX_BUYS})")
             
-            print(f"📊 {state['buy_count']} شراء | {len(state['open_positions'])} مفتوحة | {state['total_usdt_spent']:.2f} USDT")
+            # 3. التقرير الدوري كل 10 دقائق فقط (Tick #10, #20, #30...)
+            if cycle % 10 == 0:
+                next_signal_info = get_next_signal()
+                send_status_report(cycle, time_str, elapsed, current_price, state, next_signal_info)
+                print(f"📨 تم إرسال التقرير الدوري #{cycle//10}")
+            
+            print(f"📊 {state['buy_count']} شراء | {len(state['open_positions'])} مفتوحة | "
+                  f"ربح: {state['total_profit']:.4f} | منفق: {state['total_usdt_spent']:.2f}")
             
         except Exception as e:
             print(f"❌ خطأ Tick: {e}")
-            send_telegram_message(f"⚠️ خطأ Tick #{cycle}: {e}")
+            # إرسال خطأ فوري فقط إذا كان خطأً حرجاً (كل 10 دقائق أيضاً)
+            if cycle % 10 == 0:
+                send_telegram_message(f"⚠️ <b>خطأ في Tick #{cycle}:</b>\n{e}\n🕒 {time_str}")
         
         # انتظار
         remaining = duration - (time.time() - start_time)
         if remaining > 0:
             sleep_time = min(CHECK_INTERVAL, remaining)
-            print(f"💤 {sleep_time:.0f} ثانية متبقية...")
+            print(f"💤 {sleep_time:.0f} ثانية...")
             time.sleep(sleep_time)
     
     # ==========================================
-    # نهاية الدورة: بيع ما أمكن + حفظ الحالة
+    # نهاية الدورة
     # ==========================================
     print(f"\n{'='*50}\n⏰ انتهت الـ 3 ساعات!\n{'='*50}")
     
@@ -264,12 +391,20 @@ if __name__ == "__main__":
                 if current_price > pos['price']:
                     exchange.create_market_sell_order('BTC/USDT', pos['amount'])
                     profit = (current_price - pos['price']) * pos['amount']
+                    state['total_profit'] += profit
+                    state['trades_history'].append({
+                        'type': 'sell_final', 'buy_price': pos['price'],
+                        'sell_price': current_price, 'amount': pos['amount'],
+                        'profit': profit, 'time': time_str
+                    })
                     send_telegram_message(f"⏰ <b>بيع نهائي</b> | ربح: {profit:.4f} USDT")
                     state['open_positions'].remove(pos)
                 else:
+                    loss = (pos['price'] - current_price) * pos['amount']
                     send_telegram_message(
-                        f"⚠️ <b>Position باقٍ</b>\n"
+                        f"⚠️ <b>Position باقٍ مفتوح</b>\n"
                         f"شراء: {pos['price']:.2f}$ | حالي: {current_price:.2f}$\n"
+                        f"خسارة محتملة: {loss:.4f} USDT\n"
                         f"سيتم متابعته في الدورة القادمة."
                     )
         except Exception as e:
@@ -277,12 +412,23 @@ if __name__ == "__main__":
     
     save_state(state)
     
+    # التقرير النهائي
+    total_trades = len([t for t in state['trades_history'] if t['type'] in ('sell_profit', 'sell_final')])
+    net_pnl = state['total_profit'] - state['total_loss']
+    net_emoji = "🟢" if net_pnl >= 0 else "🔴"
+    
     final_msg = (
-        f"✅ <b>انتهت الدورة</b>\n"
-        f"🔢 شراء: {state['buy_count']} | 📊 مفتوحة: {len(state['open_positions'])}\n"
-        f"💵 منفق: {state['total_usdt_spent']:.2f} USDT\n"
+        f"✅ <b>انتهت الدورة (3 ساعات)</b>\n\n"
+        f"📊 <b>ملخص الأداء:</b>\n"
+        f"🔢 عمليات شراء: {state['buy_count']}\n"
+        f"💰 عمليات بيع ناجحة: {total_trades}\n"
+        f"📦 Positions مفتوحة: {len(state['open_positions'])}\n"
+        f"💵 إجمالي منفق: {state['total_usdt_spent']:.2f} USDT\n"
+        f"📊 إجمالي أرباح: {state['total_profit']:.4f} USDT\n"
+        f"📉 إجمالي خسائر: {state['total_loss']:.4f} USDT\n"
+        f"{net_emoji} <b>صافي الربح/الخسارة: {net_pnl:.4f} USDT</b>\n\n"
         f"🕒 {datetime.now(timezone.utc).strftime('%H:%M:%S UTC')}\n"
         f"💤 إعادة التشغيل بعد ساعة."
     )
     send_telegram_message(final_msg)
-    print(f"✅ انتهى | {state['buy_count']} شراء | {len(state['open_positions'])} مفتوحة")
+    print(f"✅ انتهى | ربح: {state['total_profit']:.4f} | خسارة: {state['total_loss']:.4f} | صافي: {net_pnl:.4f}")
