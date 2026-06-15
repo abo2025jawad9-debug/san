@@ -20,7 +20,7 @@ TELEGRAM_CHAT_ID = '6390985342'
 MAX_BUYS = 7
 MAX_TOTAL_USDT = 50
 TRADE_USDT_PER_BUY = MAX_TOTAL_USDT // MAX_BUYS
-DURATION_MINUTES = 360
+DURATION_MINUTES = 180
 CHECK_INTERVAL = 60
 MIN_BTC_AMOUNT = 0.0001
 STATE_FILE = 'state.json'
@@ -520,4 +520,3 @@ if __name__ == "__main__":
     )
     send_telegram_message(final_msg)
     print(f"✅ انتهى | صافي: {net_pnl:.4f} | رسوم: {state['total_fees_paid']:.4f}")
-
