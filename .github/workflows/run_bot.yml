@@ -2,7 +2,7 @@ name: Crypto Trading Bot
 
 on:
   schedule:
-    - cron: '0 */4 * * *'   # كل 4 ساعات: 3 عمل + 1 راحة
+    - cron: '0 */7 * * *'   # كل 4 ساعات: 3 عمل + 1 راحة
   workflow_dispatch:
 
 permissions:
