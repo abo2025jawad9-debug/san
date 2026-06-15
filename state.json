@@ -1,0 +1,27 @@
+{
+  "open_positions": [],
+  "buy_count": 1,
+  "total_usdt_spent": 7.0,
+  "processed_signals": [
+    "2026-06-15 00:59"
+  ],
+  "total_profit": 0.002562929061784897,
+  "total_loss": 0.0,
+  "trades_history": [
+    {
+      "type": "buy",
+      "price": 65550.0,
+      "amount": 0.00010678871090770404,
+      "usdt": 7.0,
+      "time": "00:54:03"
+    },
+    {
+      "type": "sell_profit",
+      "buy_price": 65550.0,
+      "sell_price": 65574.0,
+      "amount": 0.00010678871090770404,
+      "profit": 0.002562929061784897,
+      "time": "00:55:06"
+    }
+  ]
+}
