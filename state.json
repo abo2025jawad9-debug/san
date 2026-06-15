@@ -1,11 +1,11 @@
 {
   "open_positions": [],
-  "buy_count": 1,
-  "total_usdt_spent": 7.0,
+  "buy_count": 2,
+  "total_usdt_spent": 14.007,
   "processed_signals": [
-    "2026-06-15 00:59"
+    "2026-06-15 22:29"
   ],
-  "total_profit": 0.002562929061784897,
+  "total_profit": 0.04986295530612805,
   "total_loss": 0.0,
   "trades_history": [
     {
@@ -22,6 +22,26 @@
       "amount": 0.00010678871090770404,
       "profit": 0.002562929061784897,
       "time": "00:55:06"
+    },
+    {
+      "type": "buy",
+      "price": 66300.0,
+      "amount": 0.00010558069381598793,
+      "raw_usdt": 7.0,
+      "fee": 0.007,
+      "total_paid": 7.007,
+      "time": "22:24:08"
+    },
+    {
+      "type": "sell_profit",
+      "buy_price": 66300.0,
+      "sell_price": 66881.18,
+      "amount": 0.00010558069381598793,
+      "gross_profit": 0.06136138763197513,
+      "fees": 0.014061361387631975,
+      "net_profit": 0.04730002624434315,
+      "time": "22:28:13"
     }
-  ]
+  ],
+  "total_fees_paid": 0.021061361387631976
 }
