@@ -25,9 +25,6 @@ CHECK_INTERVAL = 60
 MIN_BTC_AMOUNT = 0.0001
 STATE_FILE = 'state.json'
 
-# ---- رسوم Binance Spot (Taker 0.1%) ----
-FEE_RATE = 0.001  # 0.1%
-
 # ==========================================
 # 2. دالة تليجرام
 # ==========================================
@@ -40,7 +37,7 @@ def send_telegram_message(message):
         print(f"❌ Telegram: {e}")
 
 # ==========================================
-# 3. حفظ واسترجاع الحالة (مُصلح)
+# 3. حفظ واسترجاع الحالة
 # ==========================================
 def load_state():
     default_state = {
@@ -53,19 +50,16 @@ def load_state():
         'total_loss': 0.0,
         'trades_history': []
     }
-    
     if os.path.exists(STATE_FILE):
         try:
             with open(STATE_FILE, 'r') as f:
                 state = json.load(f)
-            # ✅ أضف أي مفاتيح مفقودة من default_state
             for key, value in default_state.items():
                 if key not in state:
                     state[key] = value
             return state
         except:
             pass
-    
     return default_state
 
 def save_state(state):
@@ -117,7 +111,20 @@ def get_auto_proxy_exchange():
     return None, None
 
 # ==========================================
-# 6. جدول الإشارات
+# 6. جلب الرصيد
+# ==========================================
+def get_balance(ex):
+    try:
+        bal = ex.fetch_balance()
+        usdt = bal['USDT']['free']
+        btc = bal['BTC']['free']
+        return usdt, btc
+    except Exception as e:
+        print(f"❌ فشل جلب الرصيد: {e}")
+        return None, None
+
+# ==========================================
+# 7. جدول الإشارات
 # ==========================================
 schedule = [
     {"time": "2026-06-13 11:59", "type": "نزول"},
@@ -156,7 +163,7 @@ schedule = [
 ]
 
 # ==========================================
-# 7. إيجاد أقرب موعد إشارة
+# 8. إيجاد أقرب موعد إشارة
 # ==========================================
 def get_next_signal():
     now = datetime.now(timezone.utc)
@@ -179,7 +186,7 @@ def get_next_signal():
     return next_time.strftime('%Y-%m-%d %H:%M'), next_type, time_str
 
 # ==========================================
-# 8. البيع (مع حساب الرسوم + صافي الربح)
+# 9. البيع — فقط إذا كان الربح الفعلي إيجابي
 # ==========================================
 def check_sell(ex, current_price, time_str, state):
     sold_any = False
@@ -187,53 +194,84 @@ def check_sell(ex, current_price, time_str, state):
         entry_price = pos['price']
         amount = pos['amount']
         
-        buy_fee = entry_price * amount * FEE_RATE
-        sell_fee = current_price * amount * FEE_RATE
-        gross_profit = (current_price - entry_price) * amount
-        net_profit = gross_profit - buy_fee - sell_fee
+        # جلب الرصيد قبل البيع
+        usdt_before, btc_before = get_balance(ex)
+        print(f"💰 الرصيد قبل البيع: USDT={usdt_before:.6f}, BTC={btc_before:.6f}" if usdt_before else "❌ فشل جلب الرصيد")
         
-        print(f"📊 فحص بيع: شراء {entry_price:.2f}$ | حالي {current_price:.2f}$ | "
-              f"إجمالي: {gross_profit:.4f}$ | رسوم: {buy_fee+sell_fee:.4f}$ | صافي: {net_profit:.4f}$")
+        # ✅ نبيع فقط إذا كان السعر أعلى بما يكفي لتغطية الرسوم + ربح
+        # نحتاج: سعر البيع > سعر الشراء × 1.003 (0.2% على الأقل ربح صافي)
+        min_sell_price = entry_price * 1.003
         
-        if net_profit > 0:
+        if current_price >= min_sell_price:
             try:
-                ex.create_market_sell_order('BTC/USDT', amount)
+                order = ex.create_market_sell_order('BTC/USDT', amount)
+                time.sleep(3)
                 
-                state['total_profit'] += net_profit
-                state['total_fees_paid'] += (buy_fee + sell_fee)
+                # جلب الرصيد بعد البيع
+                usdt_after, btc_after = get_balance(ex)
+                print(f"💰 الرصيد بعد البيع: USDT={usdt_after:.6f}, BTC={btc_after:.6f}" if usdt_after else "❌ فشل جلب الرصيد")
                 
-                state['trades_history'].append({
-                    'type': 'sell_profit',
-                    'buy_price': entry_price,
-                    'sell_price': current_price,
-                    'amount': amount,
-                    'gross_profit': gross_profit,
-                    'fees': buy_fee + sell_fee,
-                    'net_profit': net_profit,
-                    'time': time_str
-                })
+                # حساب الربح/الخسارة الفعلية
+                if usdt_before is not None and usdt_after is not None:
+                    actual_pnl = usdt_after - usdt_before
+                else:
+                    actual_pnl = (current_price - entry_price) * amount * 0.998
                 
-                msg = (f"🎉 <b>✅ بيع ناجح بربح صافٍ!</b>\n\n"
-                       f"💰 سعر الشراء: {entry_price:.2f} USDT\n"
-                       f"💰 سعر البيع: {current_price:.2f} USDT\n"
-                       f"📦 الكمية: {amount:.6f} BTC\n"
-                       f"📈 ربح إجمالي: {gross_profit:.4f} USDT\n"
-                       f"📉 رسوم التداول: {buy_fee+sell_fee:.4f} USDT\n"
-                       f"📊 <b>✨ ربح صافي: +{net_profit:.4f} USDT</b> 🟢\n"
-                       f"💵 إجمالي أرباح صافية: {state['total_profit']:.4f} USDT\n"
-                       f"🕒 {time_str}")
-                send_telegram_message(msg)
-                print(f"✅ بيع بربح صافي: {net_profit:.4f} USDT (رسوم: {buy_fee+sell_fee:.4f})")
-                state['open_positions'].remove(pos)
-                sold_any = True
+                # ✅ نبيع فقط إذا كان الربح الفعلي إيجابي
+                if actual_pnl > 0:
+                    state['total_profit'] += actual_pnl
+                    
+                    state['trades_history'].append({
+                        'type': 'sell_profit',
+                        'buy_price': entry_price,
+                        'sell_price': current_price,
+                        'amount': amount,
+                        'actual_pnl': actual_pnl,
+                        'usdt_before': usdt_before,
+                        'usdt_after': usdt_after,
+                        'time': time_str
+                    })
+                    
+                    msg = (f"🎉 <b>✅ بيع ناجح بربح صافٍ!</b>\n\n"
+                           f"💰 سعر الشراء: {entry_price:.2f} USDT\n"
+                           f"💰 سعر البيع: {current_price:.2f} USDT\n"
+                           f"📦 الكمية المباعة: {amount:.6f} BTC\n\n"
+                           f"📊 <b>الربح الفعلي: 🟢 +{actual_pnl:.6f} USDT</b>\n\n"
+                           f"💵 رصيد USDT قبل: {usdt_before:.6f}\n"
+                           f"💵 رصيد USDT بعد: {usdt_after:.6f}\n"
+                           f"📈 الفرق: +{actual_pnl:.6f} USDT\n\n"
+                           f"💰 إجمالي أرباح: {state['total_profit']:.6f} USDT\n"
+                           f"🕒 {time_str}")
+                    send_telegram_message(msg)
+                    print(f"✅ بيع بربح: +{actual_pnl:.6f} USDT")
+                    state['open_positions'].remove(pos)
+                    sold_any = True
+                else:
+                    # ❌ الربح الفعلي سالب — نحتفظ بالـ position
+                    msg = (f"⏳ <b>لم يُباع — الربح الفعلي سالب</b>\n\n"
+                           f"💰 سعر الشراء: {entry_price:.2f} USDT\n"
+                           f"💰 سعر البيع الحالي: {current_price:.2f} USDT\n"
+                           f"📦 الكمية: {amount:.6f} BTC\n"
+                           f"📉 <b>الربح الفعلي المحتمل: 🔴 {actual_pnl:.6f} USDT</b>\n"
+                           f"💵 رصيد USDT قبل: {usdt_before:.6f}\n"
+                           f"💵 رصيد USDT بعد: {usdt_after:.6f}\n\n"
+                           f"⏳ <b>سيتم الانتظار حتى يرتفع السعر أكثر...</b>\n"
+                           f"🎯 السعر المطلوب: {min_sell_price:.2f} USDT\n"
+                           f"🕒 {time_str}")
+                    send_telegram_message(msg)
+                    print(f"⏳ لم يُباع: ربح فعلي سالب {actual_pnl:.6f} — في الانتظار")
+                    
             except Exception as e:
                 print(f"❌ فشل بيع: {e}")
+                send_telegram_message(f"❌ <b>فشل البيع:</b>\n{e}\n🕒 {time_str}")
         else:
-            print(f"⏳ لم يُباع: صافي {net_profit:.4f} (رسوم {buy_fee+sell_fee:.4f}) - في انتظار ارتفاع")
+            # السعر لم يصل للحد المطلوب
+            needed_rise = ((min_sell_price - current_price) / current_price) * 100
+            print(f"⏳ لم يُباع: السعر {current_price:.2f} < الحد {min_sell_price:.2f} (يحتاج ارتفاع {needed_rise:.2f}%)")
     return sold_any
 
 # ==========================================
-# 9. الشراء (مع حساب الرسوم في التكلفة)
+# 10. الشراء
 # ==========================================
 checked_signals_current_run = set()
 
@@ -265,63 +303,84 @@ def check_buy(ex, now, time_str, state):
                     checked_signals_current_run.add(signal["time"])
                 
                 if price_1h_ago > current_price:
+                    # جلب الرصيد قبل الشراء
+                    usdt_before, btc_before = get_balance(ex)
+                    print(f"💰 الرصيد قبل الشراء: USDT={usdt_before:.6f}, BTC={btc_before:.6f}" if usdt_before else "❌ فشل جلب الرصيد")
+                    
                     amount = TRADE_USDT_PER_BUY / current_price
                     if amount < MIN_BTC_AMOUNT:
                         amount = MIN_BTC_AMOUNT
                     
-                    raw_usdt = amount * current_price
-                    buy_fee = raw_usdt * FEE_RATE
-                    actual_usdt = raw_usdt + buy_fee
+                    estimated_cost = amount * current_price * 1.001
                     
-                    if state['total_usdt_spent'] + actual_usdt > MAX_TOTAL_USDT:
+                    if state['total_usdt_spent'] + estimated_cost > MAX_TOTAL_USDT:
                         msg = (f"⛔ <b>تم إلغاء الشراء</b>\n"
-                              f"سيتجاوز الحد الإجمالي ({MAX_TOTAL_USDT} USDT)\n"
-                              f"💵 المنفق: {state['total_usdt_spent']:.2f} USDT\n"
-                              f"🕒 {time_str}")
+                               f"سيتجاوز الحد الإجمالي ({MAX_TOTAL_USDT} USDT)\n"
+                               f"💵 المنفق: {state['total_usdt_spent']:.2f} USDT\n"
+                               f"🕒 {time_str}")
                         send_telegram_message(msg)
                         return False
                     
-                    ex.create_market_buy_order('BTC/USDT', amount)
+                    # تنفيذ الشراء
+                    order = ex.create_market_buy_order('BTC/USDT', amount)
+                    time.sleep(3)
+                    
+                    # جلب الرصيد بعد الشراء
+                    usdt_after, btc_after = get_balance(ex)
+                    print(f"💰 الرصيد بعد الشراء: USDT={usdt_after:.6f}, BTC={btc_after:.6f}" if usdt_after else "❌ فشل جلب الرصيد")
+                    
+                    # حساب المبلغ المدفوع الفعلي
+                    if usdt_before is not None and usdt_after is not None:
+                        actual_spent = usdt_before - usdt_after
+                        actual_btc_gained = btc_after - btc_before if btc_before else amount * 0.999
+                    else:
+                        actual_spent = amount * current_price * 1.001
+                        actual_btc_gained = amount * 0.999
                     
                     state['buy_count'] += 1
-                    state['total_usdt_spent'] += actual_usdt
-                    state['total_fees_paid'] += buy_fee
+                    state['total_usdt_spent'] += actual_spent
                     state['open_positions'].append({
                         'price': current_price,
-                        'amount': amount,
+                        'amount': actual_btc_gained,
                         'signal_time': signal["time"],
-                        'buy_fee': buy_fee
+                        'actual_spent': actual_spent,
+                        'usdt_before_buy': usdt_before,
+                        'usdt_after_buy': usdt_after
                     })
                     state['processed_signals'].append(signal["time"])
                     
                     state['trades_history'].append({
                         'type': 'buy',
                         'price': current_price,
-                        'amount': amount,
-                        'raw_usdt': raw_usdt,
-                        'fee': buy_fee,
-                        'total_paid': actual_usdt,
+                        'amount': actual_btc_gained,
+                        'actual_spent': actual_spent,
+                        'usdt_before': usdt_before,
+                        'usdt_after': usdt_after,
                         'time': time_str
                     })
+                    
+                    # حساب السعر المطلوب للبيع بربح
+                    min_sell = current_price * 1.003
                     
                     msg = (f"🟢 <b>✅ شراء ناجح #{state['buy_count']}</b>\n\n"
                            f"⚠️ الإشارة: {signal['type']}\n"
                            f"💰 السعر: {current_price:.2f} USDT\n"
-                           f"📦 الكمية: {amount:.6f} BTC\n"
-                           f"💵 قيمة الأصل: {raw_usdt:.2f} USDT\n"
-                           f"📉 رسوم الشراء: {buy_fee:.4f} USDT\n"
-                           f"💵 <b>المبلغ المدفوع: {actual_usdt:.2f} USDT</b>\n"
+                           f"📦 الكمية: {actual_btc_gained:.6f} BTC\n"
+                           f"💵 المبلغ المدفوع: {actual_spent:.6f} USDT\n\n"
+                           f"💵 رصيد USDT قبل: {usdt_before:.6f}\n"
+                           f"💵 رصيد USDT بعد: {usdt_after:.6f}\n\n"
+                           f"🎯 <b>سعر البيع المطلوب للربح: {min_sell:.2f} USDT</b>\n"
                            f"📊 إجمالي منفق: {state['total_usdt_spent']:.2f}/{MAX_TOTAL_USDT} USDT\n"
                            f"🔢 المتبقي: {MAX_BUYS - state['buy_count']} عمليات\n"
                            f"🕒 {time_str}")
                     send_telegram_message(msg)
-                    print(f"✅ شراء #{state['buy_count']} | قيمة: {raw_usdt:.2f} | رسوم: {buy_fee:.4f} | إجمالي: {actual_usdt:.2f}")
+                    print(f"✅ شراء #{state['buy_count']} | مبلغ: {actual_spent:.6f} | بيع عند: {min_sell:.2f}")
                     return True
                 else:
                     if signal["time"] not in checked_signals_current_run:
                         msg = (f"🚫 <b>تم رفض الشراء</b>\n"
-                              f"السعر قبل ساعة ({price_1h_ago:.2f}) ليس أعلى من الحالي ({current_price:.2f})\n"
-                              f"سيتم إعادة المحاولة...\n🕒 {time_str}")
+                               f"السعر قبل ساعة ({price_1h_ago:.2f}) ليس أعلى من الحالي ({current_price:.2f})\n"
+                               f"سيتم إعادة المحاولة...\n🕒 {time_str}")
                         send_telegram_message(msg)
                     print(f"🚫 شرط غير متحقق: {price_1h_ago:.2f} vs {current_price:.2f}")
                     return False
@@ -333,66 +392,63 @@ def check_buy(ex, now, time_str, state):
     return False
 
 # ==========================================
-# 10. التقرير الدوري (كل 10 دقائق)
+# 11. التقرير الدوري (كل 10 دقائق)
 # ==========================================
 def send_status_report(tick_num, time_str, elapsed_min, current_price, state, next_signal_info):
     next_time, next_type, next_diff = next_signal_info
     
+    usdt_bal, btc_bal = get_balance(exchange)
+    
     open_value = 0
-    unrealized_gross = 0
-    unrealized_net = 0
+    unrealized_pnl = 0
     
     for pos in state['open_positions']:
         val = pos['amount'] * current_price
         open_value += val
         gross = (current_price - pos['price']) * pos['amount']
-        sell_fee_est = val * FEE_RATE
-        buy_fee = pos.get('buy_fee', pos['price'] * pos['amount'] * FEE_RATE)
-        net = gross - buy_fee - sell_fee_est
-        unrealized_gross += gross
-        unrealized_net += net
+        unrealized_pnl += gross
     
-    pnl_emoji = "🟢" if unrealized_net >= 0 else "🔴"
-    pnl_text = f"+{unrealized_net:.4f}" if unrealized_net >= 0 else f"{unrealized_net:.4f}"
+    pnl_emoji = "🟢" if unrealized_pnl >= 0 else "🔴"
+    pnl_text = f"+{unrealized_pnl:.4f}" if unrealized_pnl >= 0 else f"{unrealized_pnl:.4f}"
     
     msg = (f"📊 <b>تقرير الدورة #{tick_num}</b>\n\n"
            f"🕒 الوقت: {time_str} | مضى: {elapsed_min:.0f} دقيقة\n"
            f"💰 سعر BTC: {current_price:.2f} USDT\n\n"
+           f"💵 <b>الرصيد الفعلي:</b>\n"
+           f"   USDT: {usdt_bal:.6f if usdt_bal else 'غير معروف'}\n"
+           f"   BTC: {btc_bal:.6f if btc_bal else 'غير معروف'}\n\n"
            f"📈 <b>الحالة:</b>\n"
            f"🔢 عمليات شراء: {state['buy_count']}/{MAX_BUYS}\n"
            f"📦 Positions مفتوحة: {len(state['open_positions'])}\n"
            f"💵 قيمة المفتوحة: {open_value:.2f} USDT\n"
-           f"📊 ربح/خسارة إجمالي: {unrealized_gross:.4f} USDT\n"
-           f"📊 ربح/خسارة صافي (بعد رسوم): {pnl_emoji} {pnl_text} USDT\n"
-           f"💰 إجمالي أرباح صافية محققة: {state['total_profit']:.4f} USDT\n"
-           f"📉 إجمالي رسوم مدفوعة: {state.get('total_fees_paid', 0.0):.4f} USDT\n"
+           f"📊 ربح/خسارة غير محقق: {pnl_emoji} {pnl_text} USDT\n"
+           f"💰 إجمالي أرباح محققة: {state['total_profit']:.6f} USDT\n"
+           f"📉 إجمالي خسائر: {state['total_loss']:.6f} USDT\n"
            f"💵 إجمالي منفق: {state['total_usdt_spent']:.2f}/{MAX_TOTAL_USDT} USDT\n\n")
     
     if next_time:
         msg += (f"⏰ <b>أقرب إشارة قادمة:</b>\n"
-               f"📅 {next_time}\n"
-               f"⚠️ النوع: {next_type}\n"
-               f"⏳ بعد: {next_diff}\n\n")
+                f"📅 {next_time}\n"
+                f"⚠️ النوع: {next_type}\n"
+                f"⏳ بعد: {next_diff}\n\n")
     else:
         msg += "⏰ لا توجد إشارات مستقبلية.\n\n"
     
     if state['open_positions']:
-        msg += "📋 <b>Positions المفتوحة (مع تقدير الرسوم):</b>\n"
+        msg += "📋 <b>Positions المفتوحة (في الانتظار):</b>\n"
         for i, pos in enumerate(state['open_positions'], 1):
-            gross = (current_price - pos['price']) * pos['amount']
-            buy_fee = pos.get('buy_fee', pos['price'] * pos['amount'] * FEE_RATE)
-            sell_fee_est = current_price * pos['amount'] * FEE_RATE
-            net = gross - buy_fee - sell_fee_est
-            pnl_em = "🟢" if net >= 0 else "🔴"
-            msg += (f"  #{i}: شراء {pos['price']:.2f}$ | حالي {current_price:.2f}$ | "
-                   f"صافي {pnl_em} {net:.4f} USDT\n")
+            min_sell = pos['price'] * 1.003
+            needed = ((min_sell - current_price) / current_price) * 100
+            msg += (f"  #{i}: شراء {pos['price']:.2f}$ | حالي {current_price:.2f}$\n"
+                   f"      🎯 بيع عند: {min_sell:.2f}$ (يحتاج +{needed:.2f}%)\n")
     
     send_telegram_message(msg)
 
 # ==========================================
-# 11. التشغيل الرئيسي (3 ساعات)
+# 12. التشغيل الرئيسي (3 ساعات)
 # ==========================================
 if __name__ == "__main__":
+    global exchange
     exchange, valid_proxy = get_auto_proxy_exchange()
     if exchange is None:
         send_telegram_message("🚨 <b>فشل الاتصال بجميع البروكسيات.</b> تم إيقاف البوت.")
@@ -404,18 +460,21 @@ if __name__ == "__main__":
     start_time = time.time()
     duration = DURATION_MINUTES * 60
     
+    opening_usdt, opening_btc = get_balance(exchange)
+    
     next_time, next_type, next_diff = get_next_signal()
     send_telegram_message(
         f"🚀 <b>بدأت دورة البوت (3 ساعات)</b>\n\n"
+        f"💵 رصيد USDT: {opening_usdt:.6f if opening_usdt else 'غير معروف'}\n"
+        f"📦 رصيد BTC: {opening_btc:.6f if opening_btc else 'غير معروف'}\n"
         f"📊 Positions سابقة: {len(state['open_positions'])}\n"
         f"💵 منفق سابق: {state['total_usdt_spent']:.2f} USDT\n"
-        f"💰 أرباح صافية سابقة: {state['total_profit']:.4f} USDT\n"
-        f"📉 رسوم سابقة: {state.get('total_fees_paid', 0.0):.4f} USDT\n"
+        f"💰 أرباح سابقة: {state['total_profit']:.6f} USDT\n"
         f"⏰ أقرب إشارة: {next_time or 'لا يوجد'} ({next_type or ''})\n"
         f"🕒 {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC')}"
     )
     
-    print(f"🚀 بدء 3 ساعات | Positions: {len(state['open_positions'])} | processed: {state['processed_signals']}")
+    print(f"🚀 بدء 3 ساعات | Positions: {len(state['open_positions'])}")
     
     cycle = 0
     while time.time() - start_time < duration:
@@ -432,7 +491,7 @@ if __name__ == "__main__":
             current_price = ticker['last']
             print(f"💰 BTC: {current_price:.2f} USDT")
             
-            # 1. بيع
+            # 1. بيع — فقط إذا كان الربح الفعلي إيجابي
             if state['open_positions']:
                 check_sell(exchange, current_price, time_str, state)
                 save_state(state)
@@ -449,7 +508,7 @@ if __name__ == "__main__":
                 print(f"📨 تقرير دوري #{cycle//10}")
             
             print(f"📊 {state['buy_count']} شراء | {len(state['open_positions'])} مفتوحة | "
-                  f"صافي: {state['total_profit']:.4f} | رسوم: {state.get('total_fees_paid', 0.0):.4f}")
+                  f"ربح: {state['total_profit']:.6f}")
             
         except Exception as e:
             print(f"❌ خطأ Tick: {e}")
@@ -463,58 +522,43 @@ if __name__ == "__main__":
             time.sleep(sleep_time)
     
     # ==========================================
-    # نهاية الدورة
+    # نهاية الدورة — لا نبيع إلا بربح
     # ==========================================
     print(f"\n{'='*50}\n⏰ انتهت الـ 3 ساعات!\n{'='*50}")
     
-    if state['open_positions']:
-        try:
-            ticker = exchange.fetch_ticker('BTC/USDT')
-            current_price = ticker['last']
-            for pos in state['open_positions'][:]:
-                entry_price = pos['price']
-                amount = pos['amount']
-                buy_fee = pos.get('buy_fee', entry_price * amount * FEE_RATE)
-                sell_fee = current_price * amount * FEE_RATE
-                gross = (current_price - entry_price) * amount
-                net = gross - buy_fee - sell_fee
-                
-                if net > 0:
-                    exchange.create_market_sell_order('BTC/USDT', amount)
-                    state['total_profit'] += net
-                    state['total_fees_paid'] += (buy_fee + sell_fee)
-                    send_telegram_message(f"⏰ <b>بيع نهائي صافي</b> | ربح: {net:.4f} USDT (رسوم: {buy_fee+sell_fee:.4f})")
-                    state['open_positions'].remove(pos)
-                else:
-                    send_telegram_message(
-                        f"⚠️ <b>Position باقٍ مفتوح</b>\n"
-                        f"شراء: {pos['price']:.2f}$ | حالي: {current_price:.2f}$\n"
-                        f"صافي: {net:.4f} USDT (لم يغطِ الرسوم)\n"
-                        f"سيتم متابعته في الدورة القادمة."
-                    )
-        except Exception as e:
-            print(f"❌ خطأ بيع نهائي: {e}")
+    closing_usdt, closing_btc = get_balance(exchange)
+    
+    # ✅ لا نبيع positions المتبقية إلا إذا كان الربح إيجابي
+    remaining_positions = len(state['open_positions'])
+    
+    if remaining_positions > 0:
+        msg = (f"⏰ <b>انتهت الدورة — Positions متبقية</b>\n\n"
+               f"📦 عدد الـ Positions المفتوحة: {remaining_positions}\n"
+               f"⏳ <b>لم تُباع لأن السعر لم يصل للربح المطلوب</b>\n"
+               f"💤 سيتم الاحتفاظ بها للدورة القادمة\n\n")
+        
+        for pos in state['open_positions']:
+            min_sell = pos['price'] * 1.003
+            msg += f"💰 شراء بـ {pos['price']:.2f}$ | بيع عند {min_sell:.2f}$\n"
+        
+        msg += f"\n🕒 {datetime.now(timezone.utc).strftime('%H:%M:%S UTC')}"
+        send_telegram_message(msg)
     
     save_state(state)
     
-    total_trades = len([t for t in state['trades_history'] if t['type'] in ('sell_profit', 'sell_final')])
-    net_pnl = state['total_profit'] - state['total_loss']
-    net_emoji = "🟢" if net_pnl >= 0 else "🔴"
-    
     final_msg = (
         f"✅ <b>انتهت الدورة (3 ساعات)</b>\n\n"
+        f"💵 رصيد USDT الافتتاحي: {opening_usdt:.6f if opening_usdt else 'غير معروف'}\n"
+        f"💵 رصيد USDT الختامي: {closing_usdt:.6f if closing_usdt else 'غير معروف'}\n"
+        f"📦 رصيد BTC الختامي: {closing_btc:.6f if closing_btc else 'غير معروف'}\n"
+        f"📦 Positions مفتوحة: {remaining_positions}\n\n"
         f"📊 <b>ملخص الأداء:</b>\n"
         f"🔢 عمليات شراء: {state['buy_count']}\n"
-        f"💰 عمليات بيع ناجحة: {total_trades}\n"
-        f"📦 Positions مفتوحة: {len(state['open_positions'])}\n"
-        f"💵 إجمالي منفق: {state['total_usdt_spent']:.2f} USDT\n"
-        f"📉 إجمالي رسوم: {state.get('total_fees_paid', 0.0):.4f} USDT\n"
-        f"📊 إجمالي أرباح صافية: {state['total_profit']:.4f} USDT\n"
-        f"📉 إجمالي خسائر: {state['total_loss']:.4f} USDT\n"
-        f"{net_emoji} <b>✨ صافي الربح/الخسارة: {net_pnl:.4f} USDT</b>\n\n"
+        f"💰 عمليات بيع ناجحة: {len([t for t in state['trades_history'] if t['type'] == 'sell_profit'])}\n"
+        f"💰 إجمالي أرباح محققة: {state['total_profit']:.6f} USDT\n"
+        f"💵 إجمالي منفق: {state['total_usdt_spent']:.2f} USDT\n\n"
         f"🕒 {datetime.now(timezone.utc).strftime('%H:%M:%S UTC')}\n"
         f"💤 إعادة التشغيل بعد ساعة."
     )
     send_telegram_message(final_msg)
-    print(f"✅ انتهى | صافي: {net_pnl:.4f} | رسوم: {state.get('total_fees_paid', 0.0):.4f}")
-
+    print(f"✅ انتهى | ربح: {state['total_profit']:.6f} | Positions متبقية: {remaining_positions}")
