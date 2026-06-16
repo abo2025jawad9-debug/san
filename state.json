@@ -1,20 +1,9 @@
 {
-  "open_positions": [
-    {
-      "price": 66097.99,
-      "amount": 9.990000000004162e-05,
-      "signal_time": "2026-06-16 02:19",
-      "actual_spent": 6.6098000000001775,
-      "usdt_before_buy": 9999.9801187,
-      "usdt_after_buy": 9993.3703187
-    }
-  ],
+  "open_positions": [],
   "buy_count": 3,
   "total_usdt_spent": 20.616800000000175,
-  "processed_signals": [
-    "2026-06-16 02:19"
-  ],
-  "total_profit": 0.04986295530612805,
+  "processed_signals": [],
+  "total_profit": 6.017364085306656,
   "total_loss": 0.0,
   "trades_history": [
     {
@@ -59,6 +48,16 @@
       "usdt_before": 9999.9801187,
       "usdt_after": 9993.3703187,
       "time": "02:16:19"
+    },
+    {
+      "type": "sell_profit",
+      "buy_price": 66097.99,
+      "sell_price": 66371.95,
+      "amount": 9.990000000004162e-05,
+      "actual_pnl": 5.967501130000528,
+      "usdt_before": 9993.3703187,
+      "usdt_after": 9999.33781983,
+      "time": "07:39:57"
     }
   ],
   "total_fees_paid": 0.021061361387631976
