@@ -310,60 +310,79 @@ class TelegramNotifier:
             logging.error("❌ فشل في إرسال إشعار بدء التشغيل")
 
     async def notify_buy_success(self, pos_id: str, buy_price: float, amount: float, 
-                                  total_cost: float, reason: str):
+                                  total_cost: float, reason: str, balance_info: Dict = None):
         if not self._connected:
             return
 
         msg = (
-            "🟢 <b>تم الشراء بنجاح! #%s</b>\n\n"
-            "<b>السعر:</b> <code>%.2f</code> USDT\n"
+            "[BUY] <b>تم الشراء بنجاح! #%s</b>\n\n"
+            "<b>سعر الشراء:</b> <code>%.2f</code> USDT\n"
             "<b>الكمية:</b> <code>%.6f</code> BTC\n"
-            "<b>التكلفة الإجمالية:</b> <code>%.4f</code> USDT\n"
-            "<b>السبب:</b> %s\n"
-            "<b>الوقت:</b> %s"
+            "<b>التكلفة:</b> <code>%.4f</code> USDT\n"
+            "<b>السبب:</b> %s"
         ) % (
-            pos_id, buy_price, amount, total_cost, reason,
-            datetime.now(timezone.utc).strftime("%H:%M:%S")
+            pos_id, buy_price, amount, total_cost, reason
         )
+
+        if balance_info:
+            msg += (
+                "\n\n[BALANCE] <b>الرصيد بعد الشراء:</b>\n"
+                "<b>المستثمر:</b> <code>$%.4f</code> | "
+                "<b>المتاح:</b> <code>$%.4f</code> | "
+                "<b>الأرباح:</b> <code>+$%.4f</code>"
+            ) % (
+                balance_info["open_invested"],
+                balance_info["available"],
+                balance_info["realized_profit"]
+            )
+
+        msg += "\n<b>الوقت:</b> %s" % datetime.now(timezone.utc).strftime("%H:%M:%S")
         await self.send(msg)
 
     async def notify_sell_success(self, pos_id: str, buy_price: float, sell_price: float,
                                    amount: float, net_profit: float, profit_pct: float,
-                                   reason: str, total_portfolio_profit: float):
+                                   reason: str, total_portfolio_profit: float, balance_info: Dict = None):
         if not self._connected:
             return
 
-        emoji = "🚀🚀🚀" if profit_pct >= 5 else "🚀🚀" if profit_pct >= 3 else "🚀" if profit_pct >= 1 else "✅"
+        emoji = "[PROFIT]"
 
         msg = (
             "%s <b>تم البيع بنجاح! #%s</b>\n\n"
-            "<b>الشراء:</b> <code>%.2f</code> | <b>البيع:</b> <code>%.2f</code>\n"
-            "<b>الكمية:</b> <code>%.6f</code> BTC\n\n"
-            "<b>صافي الربح: +$%.4f (%.2f%%)</b>\n"
-            "<b>السبب:</b> %s\n"
-            "<b>إجمالي المحفظة:</b> <code>$%.4f</code>\n"
-            "<b>الوقت:</b> %s"
+            "[DETAILS] <b>تفاصيل الصفقة:</b>\n"
+            "<b>اشتريت بـ:</b> <code>%.2f</code> USDT\n"
+            "<b>بعت بـ:</b> <code>%.2f</code> USDT\n"
+            "<b>الكمية:</b> <code>%.6f</code> BTC\n"
+            "<b>فرق السعر:</b> <code>%.2f</code> USDT\n\n"
+            "[PROFIT] <b>الربح:</b>\n"
+            "<b>صافي الربح:</b> <code>+$%.4f</code>\n"
+            "<b>نسبة الربح:</b> <code>%.2f%%</code>\n"
+            "<b>السبب:</b> %s"
         ) % (
             emoji, pos_id, buy_price, sell_price, amount,
-            net_profit, profit_pct, reason, total_portfolio_profit,
-            datetime.now(timezone.utc).strftime("%H:%M:%S")
+            sell_price - buy_price,
+            net_profit, profit_pct, reason
         )
-        await self.send(msg)
 
-    async def notify_error(self, error: str, context: str = ""):
-        if not self._connected:
-            logging.error("Telegram error (%s): %s" % (context, error))
-            return
+        if balance_info:
+            msg += (
+                "\n\n[BALANCE] <b>الرصيد بعد البيع:</b>\n"
+                "<b>المستثمر:</b> <code>$%.4f</code> | "
+                "<b>المتاح:</b> <code>$%.4f</code> | "
+                "<b>إجمالي الأرباح:</b> <code>+$%.4f</code>\n"
+                "<b>المغلقة:</b> <code>%d</code> | "
+                "<b>المفتوحة:</b> <code>%d</code>"
+            ) % (
+                balance_info["open_invested"],
+                balance_info["available"],
+                balance_info["realized_profit"],
+                balance_info["closed_count"],
+                balance_info["open_count"]
+            )
+        else:
+            msg += "\n<b>إجمالي المحفظة:</b> <code>$%.4f</code>" % total_portfolio_profit
 
-        msg = (
-            "🚨 <b>خطأ!</b>\n\n"
-            "<b>السياق:</b> %s\n"
-            "<b>الخطأ:</b> <code>%s</code>\n"
-            "<b>الوقت:</b> %s"
-        ) % (
-            context or "Unknown", error,
-            datetime.now(timezone.utc).strftime("%H:%M:%S")
-        )
+        msg += "\n<b>الوقت:</b> %s" % datetime.now(timezone.utc).strftime("%H:%M:%S")
         await self.send(msg)
 
     async def notify_proxy_refresh(self, total: int, working: int, best: str, response_time: float):
@@ -378,6 +397,48 @@ class TelegramNotifier:
             "<b>الوقت:</b> %s"
         ) % (
             total, working, best, response_time,
+            datetime.now(timezone.utc).strftime("%H:%M:%S")
+        )
+        await self.send(msg)
+
+    async def notify_next_schedule(self, next_time: str, time_until: str):
+        """إشعار بأقرب وقت للشراء من الجدول"""
+        if not self._connected:
+            return
+        msg = (
+            "[SCHEDULE] <b>اقرب وقت للشراء من الجدول</b>\n\n"
+            "<b>الوقت:</b> <code>%s</code>\n"
+            "<b>متبقي:</b> %s\n"
+            "<b>الوقت الحالي:</b> %s"
+        ) % (
+            next_time,
+            time_until,
+            datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+        )
+        await self.send(msg)
+
+    async def notify_balance(self, balance_info: Dict):
+        """إشعار برصيد المحفظة"""
+        if not self._connected:
+            return
+        msg = (
+            "[BALANCE] <b>رصيد المحفظة</b>\n\n"
+            "<b>الميزانية القصوى:</b> <code>$%.2f</code>\n"
+            "<b>المستثمر حالياً:</b> <code>$%.4f</code>\n"
+            "<b>المتاح للشراء:</b> <code>$%.4f</code>\n"
+            "<b>إجمالي المنفق:</b> <code>$%.4f</code>\n"
+            "<b>الأرباح المحققة:</b> <code>+$%.4f</code>\n"
+            "<b>العمليات المفتوحة:</b> <code>%d</code>\n"
+            "<b>العمليات المغلقة:</b> <code>%d</code>\n"
+            "<b>الوقت:</b> %s"
+        ) % (
+            balance_info["max_budget"],
+            balance_info["open_invested"],
+            balance_info["available"],
+            balance_info["total_spent"],
+            balance_info["realized_profit"],
+            balance_info["open_count"],
+            balance_info["closed_count"],
             datetime.now(timezone.utc).strftime("%H:%M:%S")
         )
         await self.send(msg)
@@ -593,12 +654,33 @@ class PositionManager:
         self.open_positions: List[str] = []
         self.closed_positions: List[str] = []
         self.total_realized_profit: float = 0.0
+        self.total_invested: float = 0.0  # إجمالي المبلغ المستثمر في العمليات المفتوحة
+        self.total_spent: float = 0.0     # إجمالي المبلغ المنفق (لكل العمليات)
+
+    def get_balance_info(self) -> Dict:
+        """حساب معلومات الرصيد"""
+        open_cost = sum(
+            self.positions[pos_id].total_cost 
+            for pos_id in self.open_positions 
+            if pos_id in self.positions
+        )
+        return {
+            "total_spent": self.total_spent,
+            "open_invested": open_cost,
+            "realized_profit": self.total_realized_profit,
+            "available": self.config.max_total_usdt - open_cost,
+            "max_budget": self.config.max_total_usdt,
+            "open_count": len(self.open_positions),
+            "closed_count": len(self.closed_positions),
+        }
 
     async def create_position(self, buy_price: float, amount: float, 
                              buy_fee: float, total_cost: float, reason: str) -> Position:
         pos = Position(buy_price, amount, buy_fee, total_cost, reason, self.config.fee_rate)
         self.positions[pos.id] = pos
         self.open_positions.append(pos.id)
+        self.total_invested += total_cost
+        self.total_spent += total_cost
         return pos
 
     async def check_all_positions(self, current_price: float) -> List[tuple]:
@@ -628,6 +710,7 @@ class PositionManager:
         self.open_positions.remove(pos_id)
         self.closed_positions.append(pos_id)
         self.total_realized_profit += pos.net_profit
+        self.total_invested -= pos.total_cost
         return result
 
     def get_open_count(self) -> int:
@@ -786,6 +869,24 @@ class TradingBot:
             logging.info("💾 تم حفظ الحالة إلى %s" % STATE_FILE)
         except Exception as e:
             logging.error("❌ فشل حفظ الحالة: %s" % str(e))
+
+    def get_next_schedule_time(self) -> Optional[str]:
+        """الحصول على أقرب وقت للشراء من الجدول"""
+        now = datetime.now(timezone.utc)
+        now_str = now.strftime("%Y-%m-%d %H:%M")
+
+        future_signals = []
+        for signal in self.config.schedule:
+            signal_time = signal["time"]
+            # Check if signal is in the future and not processed
+            if signal_time > now_str and signal_time not in self.processed_signals:
+                if signal["type"] in ["نزول", "صعود ونزول"]:
+                    future_signals.append(signal_time)
+
+        if future_signals:
+            future_signals.sort()
+            return future_signals[0]
+        return None
 
     def load_state(self) -> bool:
         """استعادة حالة البوت من ملف"""
@@ -950,12 +1051,17 @@ class TradingBot:
 
         self.last_buy_time = time.time()
 
-        # Notify
+        # Get balance info
+        balance_info = self.positions.get_balance_info()
+
+        # Notify with balance
         await self.notifier.notify_buy_success(
-            pos.id, current_price, amount, total_cost, buy_reason
+            pos.id, current_price, amount, total_cost, buy_reason, balance_info
         )
 
-        logging.info("شراء وهمي #%s: %.6f BTC @ %.2f | السبب: %s" % (pos.id, amount, current_price, buy_reason))
+        logging.info("شراء وهمي #%s: %.6f BTC @ %.2f | السبب: %s | متاح: $%.2f" % (
+            pos.id, amount, current_price, buy_reason, balance_info["available"]
+        ))
         return pos
 
     async def check_sell(self, current_price: float = None):
@@ -974,10 +1080,13 @@ class TradingBot:
                 # Paper Trading - محاكاة بيع (لا يُنفذ على Binance)
                 result = await self.positions.close_position(pos.id, current_price, reason)
                 if result:
+                    # Get balance info after sell
+                    balance_info = self.positions.get_balance_info()
+
                     await self.notifier.notify_sell_success(
                         pos.id, pos.buy_price, current_price, pos.amount,
                         pos.net_profit, pos.profit_pct, reason,
-                        self.positions.total_realized_profit
+                        self.positions.total_realized_profit, balance_info
                     )
                     logging.info("بيع وهمي #%s: +$%.4f (%.2f%%) (Paper Trading)" % (
                         pos.id, pos.net_profit, pos.profit_pct
@@ -1012,6 +1121,19 @@ class TradingBot:
         await self.check_buy(now, current_price)
         self._cycle_count += 1
 
+        # إشعار بأقرب وقت للجدول كل 100 دورة (~5 دقائق)
+        if self._cycle_count % 100 == 0:
+            next_time = self.get_next_schedule_time()
+            if next_time:
+                # Calculate time until
+                now_dt = datetime.now(timezone.utc)
+                next_dt = datetime.strptime(next_time, "%Y-%m-%d %H:%M").replace(tzinfo=timezone.utc)
+                diff = next_dt - now_dt
+                hours = diff.seconds // 3600
+                minutes = (diff.seconds % 3600) // 60
+                time_until = "%d ساعة و %d دقيقة" % (hours, minutes) if hours > 0 else "%d دقيقة" % minutes
+                await self.notifier.notify_next_schedule(next_time, time_until)
+
         # حفظ الحالة كل 10 دورات
         if self._cycle_count % 10 == 0:
             self.save_state()
@@ -1031,6 +1153,21 @@ class TradingBot:
             # [TIME] إشعار بوقت التوقف التلقائي
             stop_at = datetime.fromtimestamp(stop_time, timezone.utc).strftime("%H:%M:%S")
             await self.notifier.send("[TIME] <b>وقت التوقف التلقائي:</b> <code>%s</code> UTC (بعد %d ساعة)" % (stop_at, self.max_runtime_hours))
+
+            # Send balance notification
+            balance_info = self.positions.get_balance_info()
+            await self.notifier.notify_balance(balance_info)
+
+            # Send next schedule notification
+            next_time = self.get_next_schedule_time()
+            if next_time:
+                now_dt = datetime.now(timezone.utc)
+                next_dt = datetime.strptime(next_time, "%Y-%m-%d %H:%M").replace(tzinfo=timezone.utc)
+                diff = next_dt - now_dt
+                hours = diff.seconds // 3600
+                minutes = (diff.seconds % 3600) // 60
+                time_until = "%d ساعة و %d دقيقة" % (hours, minutes) if hours > 0 else "%d دقيقة" % minutes
+                await self.notifier.notify_next_schedule(next_time, time_until)
 
             # Send test message
             test_success = await self.notifier.notify_test()
