@@ -17,6 +17,8 @@ from collections import deque
 import uuid
 import re
 
+STATE_FILE = "bot_state.json"
+
 # ==========================================
 # CONFIGURATION
 # ==========================================
@@ -741,10 +743,123 @@ class TradingBot:
         self.max_low24h_buys = 2        # الحد الأقصى للشراء عبر هذا الشرط قبل البيع
         self.last_low24h_buy_price = 0.0  # سعر آخر شراء عبر هذا الشرط
 
+    def save_state(self):
+        """حفظ حالة البوت إلى ملف"""
+        try:
+            state = {
+                "positions": {},
+                "open_positions": self.positions.open_positions,
+                "closed_positions": self.positions.closed_positions,
+                "total_realized_profit": self.positions.total_realized_profit,
+                "processed_signals": list(self.processed_signals),
+                "last_buy_time": self.last_buy_time,
+                "low24h_buy_count": self.low24h_buy_count,
+                "last_low24h_buy_price": self.last_low24h_buy_price,
+                "price_history": list(self.price_engine.price_history) if hasattr(self, 'price_engine') else [],
+                "hourly_prices": list(self.price_engine.hourly_prices) if hasattr(self, 'price_engine') else [],
+                "last_hourly_save": self.price_engine.last_hourly_save if hasattr(self, 'price_engine') else 0,
+                "saved_at": datetime.now(timezone.utc).isoformat()
+            }
+            # Save position details
+            for pos_id, pos in self.positions.positions.items():
+                state["positions"][pos_id] = {
+                    "id": pos.id,
+                    "buy_price": pos.buy_price,
+                    "amount": pos.amount,
+                    "buy_fee": pos.buy_fee,
+                    "total_cost": pos.total_cost,
+                    "reason": pos.reason,
+                    "buy_time": pos.buy_time.isoformat() if pos.buy_time else None,
+                    "status": pos.status,
+                    "sell_price": pos.sell_price,
+                    "sell_fee": pos.sell_fee,
+                    "gross_return": pos.gross_return,
+                    "net_profit": pos.net_profit,
+                    "profit_pct": pos.profit_pct,
+                    "sell_time": pos.sell_time.isoformat() if pos.sell_time else None,
+                    "sell_reason": pos.sell_reason,
+                    "highest_price": pos.highest_price,
+                }
+
+            with open(STATE_FILE, 'w', encoding='utf-8') as f:
+                json.dump(state, f, ensure_ascii=False, indent=2)
+            logging.info("💾 تم حفظ الحالة إلى %s" % STATE_FILE)
+        except Exception as e:
+            logging.error("❌ فشل حفظ الحالة: %s" % str(e))
+
+    def load_state(self) -> bool:
+        """استعادة حالة البوت من ملف"""
+        import os
+        if not os.path.exists(STATE_FILE):
+            logging.info("📂 لا يوجد ملف حالة سابق - بدء جديد")
+            return False
+
+        try:
+            with open(STATE_FILE, 'r', encoding='utf-8') as f:
+                state = json.load(f)
+
+            # Restore positions
+            for pos_id, pos_data in state.get("positions", {}).items():
+                pos = Position(
+                    buy_price=pos_data["buy_price"],
+                    amount=pos_data["amount"],
+                    buy_fee=pos_data["buy_fee"],
+                    total_cost=pos_data["total_cost"],
+                    reason=pos_data["reason"],
+                    fee_rate=self.config.fee_rate
+                )
+                pos.id = pos_data["id"]
+                pos.status = pos_data["status"]
+                pos.sell_price = pos_data.get("sell_price", 0.0)
+                pos.sell_fee = pos_data.get("sell_fee", 0.0)
+                pos.gross_return = pos_data.get("gross_return", 0.0)
+                pos.net_profit = pos_data.get("net_profit", 0.0)
+                pos.profit_pct = pos_data.get("profit_pct", 0.0)
+                pos.sell_reason = pos_data.get("sell_reason", "")
+                pos.highest_price = pos_data.get("highest_price", pos_data["buy_price"])
+
+                if pos_data.get("buy_time"):
+                    pos.buy_time = datetime.fromisoformat(pos_data["buy_time"])
+                if pos_data.get("sell_time"):
+                    pos.sell_time = datetime.fromisoformat(pos_data["sell_time"])
+
+                self.positions.positions[pos_id] = pos
+
+            # Restore lists
+            self.positions.open_positions = state.get("open_positions", [])
+            self.positions.closed_positions = state.get("closed_positions", [])
+            self.positions.total_realized_profit = state.get("total_realized_profit", 0.0)
+            self.processed_signals = set(state.get("processed_signals", []))
+            self.last_buy_time = state.get("last_buy_time", 0)
+            self.low24h_buy_count = state.get("low24h_buy_count", 0)
+            self.last_low24h_buy_price = state.get("last_low24h_buy_price", 0.0)
+
+            # Restore price history
+            if state.get("price_history"):
+                self.price_engine.price_history = deque(state["price_history"], maxlen=28800)
+            if state.get("hourly_prices"):
+                self.price_engine.hourly_prices = deque(state["hourly_prices"], maxlen=24)
+            self.price_engine.last_hourly_save = state.get("last_hourly_save", 0)
+
+            saved_at = state.get("saved_at", "unknown")
+            logging.info("📂 تم استعادة الحالة من %s (محفوظة في: %s)" % (STATE_FILE, saved_at))
+            logging.info("   فتح: %d | مغلقة: %d | ربح: $%.4f" % (
+                len(self.positions.open_positions),
+                len(self.positions.closed_positions),
+                self.positions.total_realized_profit
+            ))
+            return True
+        except Exception as e:
+            logging.error("❌ فشل استعادة الحالة: %s" % str(e))
+            return False
+
     async def initialize(self):
         logging.info("=" * 60)
         logging.info("تهيئة البوت")
         logging.info("=" * 60)
+
+        # استعادة الحالة السابقة
+        self.load_state()
 
         # Refresh proxies
         best_proxy = await self.proxy_manager.refresh_proxies()
@@ -897,6 +1012,10 @@ class TradingBot:
         await self.check_buy(now, current_price)
         self._cycle_count += 1
 
+        # حفظ الحالة كل 10 دورات
+        if self._cycle_count % 10 == 0:
+            self.save_state()
+
     async def run(self):
         self.running = True
         self.start_time = time.time()  # [TIME] تسجيل وقت البدء
@@ -939,6 +1058,8 @@ class TradingBot:
 
     async def stop(self):
         self.running = False
+        self.save_state()
+        logging.info("💾 تم حفظ الحالة النهائية قبل الإيقاف")
 
 
 # ==========================================
