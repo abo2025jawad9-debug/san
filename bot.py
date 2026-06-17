@@ -693,7 +693,7 @@ class TradingBot:
         self.last_buy_time = 0
         self._cycle_count = 0
         self.start_time = 0
-        self.max_runtime_hours = 6  # ⏱️ عدد الساعات حتى التوقف التلقائي
+        self.max_runtime_hours = 6  # [TIME] عدد الساعات حتى التوقف التلقائي
 
     async def initialize(self):
         logging.info("=" * 60)
@@ -778,14 +778,11 @@ class TradingBot:
                 logging.error("فشل البيع: %s" % str(e))
 
     async def run_cycle(self):
-        # ⏱️ فحص وقت التشغيل - إيقاف تلقائي بعد 6 ساعات
+        # [TIME] فحص وقت التشغيل - إيقاف تلقائي بعد 6 ساعات
         elapsed_hours = (time.time() - self.start_time) / 3600
         if elapsed_hours >= self.max_runtime_hours:
-            logging.info("⏱️ تم الوصول إلى الحد الأقصى للوقت (%.1f ساعة). إيقاف البوت..." % self.max_runtime_hours)
-            await self.notifier.send("⏱️ <b>انتهى وقت التشغيل</b>
-
-تم تشغيل البوت لمدة %.1f ساعة.
-جاري الإيقاف الآن... ⏹️" % elapsed_hours)
+            logging.info("[TIME] تم الوصول إلى الحد الأقصى للوقت (%.1f ساعة). إيقاف البوت..." % self.max_runtime_hours)
+            await self.notifier.send("[STOP] <b>انتهى وقت التشغيل</b>\n\nتم تشغيل البوت لمدة %.1f ساعة.\nجاري الإيقاف الآن..." % elapsed_hours)
             self.running = False
             return
 
@@ -796,7 +793,7 @@ class TradingBot:
 
     async def run(self):
         self.running = True
-        self.start_time = time.time()  # ⏱️ تسجيل وقت البدء
+        self.start_time = time.time()  # [TIME] تسجيل وقت البدء
         stop_time = self.start_time + (self.max_runtime_hours * 3600)
 
         async with self.notifier:
@@ -806,9 +803,9 @@ class TradingBot:
             proxy_info = self.proxy_manager.best_proxy or "CoinGecko Fallback"
             await self.notifier.notify_startup(proxy_info, "LIVE")
 
-            # ⏱️ إشعار بوقت التوقف التلقائي
+            # [TIME] إشعار بوقت التوقف التلقائي
             stop_at = datetime.fromtimestamp(stop_time, timezone.utc).strftime("%H:%M:%S")
-            await self.notifier.send("⏱️ <b>وقت التوقف التلقائي:</b> <code>%s</code> UTC (بعد %d ساعة)" % (stop_at, self.max_runtime_hours))
+            await self.notifier.send("[TIME] <b>وقت التوقف التلقائي:</b> <code>%s</code> UTC (بعد %d ساعة)" % (stop_at, self.max_runtime_hours))
 
             # Send test message
             test_success = await self.notifier.notify_test()
