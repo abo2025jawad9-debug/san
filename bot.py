@@ -112,23 +112,23 @@ class TelegramNotifier:
     async def __aenter__(self):
         """تهيئة الجلسة مع تشخيص"""
         logging.info("=" * 60)
-        logging.info("TELEGRAM NOTIFIER INITIALIZATION")
+        logging.info("تهيئة نظام إشعارات تليجرام")
         logging.info("=" * 60)
 
         # فحص الإعدادات
         if not self.config.telegram_token:
-            logging.error("❌ TELEGRAM_TOKEN is EMPTY!")
-            logging.error("   Please set TELEGRAM_TOKEN in GitHub Secrets")
+            logging.error("❌ TELEGRAM_TOKEN فارغ!")
+            logging.error("   يرجى تعيين TELEGRAM_TOKEN في أسرار GitHub")
             self._connected = False
             return self
 
         if not self.config.telegram_chat_id:
-            logging.error("❌ TELEGRAM_CHAT_ID is EMPTY!")
-            logging.error("   Please set TELEGRAM_CHAT_ID in GitHub Secrets")
+            logging.error("❌ TELEGRAM_CHAT_ID فارغ!")
+            logging.error("   يرجى تعيين TELEGRAM_CHAT_ID في أسرار GitHub")
             self._connected = False
             return self
 
-        logging.info("✅ TELEGRAM_TOKEN: %s...%s (length: %d)" % (
+        logging.info("✅ TELEGRAM_TOKEN: %s...%s (الطول: %d)" % (
             self.config.telegram_token[:8],
             self.config.telegram_token[-4:],
             len(self.config.telegram_token)
@@ -141,17 +141,17 @@ class TelegramNotifier:
             # اختبار الاتصال فوراً
             test_result = await self._test_connection()
             if test_result:
-                logging.info("✅ Telegram connection TEST PASSED")
+                logging.info("✅ اختبار الاتصال بتليجرام ناجح")
                 self._connected = True
             else:
-                logging.error("❌ Telegram connection TEST FAILED")
+                logging.error("❌ اختبار الاتصال بتليجرام فاشل")
                 self._connected = False
 
             # تشغيل مرسل الخلفية
             self._sender_task = asyncio.create_task(self._queue_sender())
 
         except Exception as e:
-            logging.error("❌ Failed to initialize Telegram: %s" % str(e))
+            logging.error("❌ فشل في تهيئة تليجرام: %s" % str(e))
             self._connected = False
 
         return self
@@ -181,7 +181,7 @@ class TelegramNotifier:
                         ))
                         return True
                     else:
-                        logging.error("❌ Telegram API error: %s" % data.get("description", "Unknown"))
+                        logging.error("❌ خطأ في API تليجرام: %s" % data.get("description", "Unknown"))
                         return False
                 else:
                     logging.error("❌ HTTP %d: %s" % (resp.status, await resp.text()))
@@ -192,14 +192,14 @@ class TelegramNotifier:
 
     async def _queue_sender(self):
         """مرسل الإشعارات في الخلفية"""
-        logging.info("📡 Queue sender started")
+        logging.info("📡 بدأ مرسل الطابور")
 
         while True:
             try:
                 message = await self.message_queue.get()
 
                 if not self._connected:
-                    logging.warning("⚠️ Telegram not connected, message dropped")
+                    logging.warning("⚠️ تليجرام غير متصل، تم حذف الرسالة")
                     self._messages_failed += 1
                     continue
 
@@ -212,16 +212,16 @@ class TelegramNotifier:
                 await asyncio.sleep(0.1)  # Rate limit protection
 
             except asyncio.CancelledError:
-                logging.info("📡 Queue sender stopped")
+                logging.info("📡 توقف مرسل الطابور")
                 break
             except Exception as e:
-                logging.error("Queue sender error: %s" % str(e))
+                logging.error("خطأ في مرسل الطابور: %s" % str(e))
                 self._messages_failed += 1
 
     async def _send_raw(self, message: str) -> bool:
         """إرسال رسالة خام - مع تسجيل كامل"""
         if not self.session:
-            logging.error("❌ No session available")
+            logging.error("❌ لا توجد جلسة متاحة")
             return False
 
         try:
@@ -233,7 +233,7 @@ class TelegramNotifier:
                 "disable_web_page_preview": True
             }
 
-            logging.debug("Sending message to %s..." % self.config.telegram_chat_id)
+            logging.debug("إرسال رسالة إلى %s..." % self.config.telegram_chat_id)
 
             async with self.session.post(url, json=payload, timeout=15) as resp:
                 response_text = await resp.text()
@@ -241,30 +241,30 @@ class TelegramNotifier:
                 if resp.status == 200:
                     data = json.loads(response_text)
                     if data.get("ok"):
-                        logging.info("✅ Message sent successfully (total: %d)" % self._messages_sent)
+                        logging.info("✅ تم إرسال الرسالة بنجاح (الإجمالي: %d)" % self._messages_sent)
                         return True
                     else:
-                        logging.error("❌ Telegram API error: %s" % data.get("description", "Unknown"))
+                        logging.error("❌ خطأ في API تليجرام: %s" % data.get("description", "Unknown"))
                         return False
                 else:
                     logging.error("❌ HTTP %d: %s" % (resp.status, response_text[:200]))
                     return False
 
         except asyncio.TimeoutError:
-            logging.error("❌ Telegram send timeout")
+            logging.error("❌ انتهت مهلة إرسال تليجرام")
             return False
         except Exception as e:
-            logging.error("❌ Telegram send failed: %s" % str(e))
+            logging.error("❌ فشل إرسال تليجرام: %s" % str(e))
             return False
 
     async def send(self, message: str):
         """إضافة رسالة إلى الطابور"""
         if not self._connected:
-            logging.warning("⚠️ Cannot send - Telegram not connected")
+            logging.warning("⚠️ لا يمكن الإرسال - تليجرام غير متصل")
             return
 
         await self.message_queue.put(message)
-        logging.debug("📨 Message queued (queue size: %d)" % self.message_queue.qsize())
+        logging.debug("📨 تم وضع الرسالة في الطابور (حجم الطابور: %d)" % self.message_queue.qsize())
 
     async def force_send(self, message: str) -> bool:
         """إرسال فوري بدون طابور (للتشخيص)"""
@@ -278,7 +278,7 @@ class TelegramNotifier:
     async def notify_startup(self, proxy_info: str = "", mode: str = "LIVE"):
         """إشعار بدء التشغيل - مهم جداً"""
         if not self._connected:
-            logging.error("❌ Cannot send startup notification - not connected")
+            logging.error("❌ لا يمكن إرسال إشعار بدء التشغيل - غير متصل")
             return
 
         msg = (
@@ -290,7 +290,7 @@ class TelegramNotifier:
             "• Check Interval: %d sec\n"
             "• Proxy: %s\n\n"
             "<b>Policy: NEVER sell at loss</b>\n"
-            "<b>Time:</b> %s"
+            "<b>الوقت:</b> %s"
         ) % (
             mode,
             self.config.min_profit_usdt, self.config.min_profit_pct,
@@ -304,9 +304,9 @@ class TelegramNotifier:
         # إرسال فوري بدون طابور للتأكد
         success = await self.force_send(msg)
         if success:
-            logging.info("✅ Startup notification sent")
+            logging.info("✅ تم إرسال إشعار بدء التشغيل")
         else:
-            logging.error("❌ Failed to send startup notification")
+            logging.error("❌ فشل في إرسال إشعار بدء التشغيل")
 
     async def notify_buy_success(self, pos_id: str, buy_price: float, amount: float, 
                                   total_cost: float, reason: str):
@@ -319,7 +319,7 @@ class TelegramNotifier:
             "<b>Amount:</b> <code>%.6f</code> BTC\n"
             "<b>Total Cost:</b> <code>%.4f</code> USDT\n"
             "<b>Reason:</b> %s\n"
-            "<b>Time:</b> %s"
+            "<b>الوقت:</b> %s"
         ) % (
             pos_id, buy_price, amount, total_cost, reason,
             datetime.now(timezone.utc).strftime("%H:%M:%S")
@@ -341,7 +341,7 @@ class TelegramNotifier:
             "<b>Net Profit: +$%.4f (%.2f%%)</b>\n"
             "<b>Reason:</b> %s\n"
             "<b>Portfolio Total:</b> <code>$%.4f</code>\n"
-            "<b>Time:</b> %s"
+            "<b>الوقت:</b> %s"
         ) % (
             emoji, pos_id, buy_price, sell_price, amount,
             net_profit, profit_pct, reason, total_portfolio_profit,
@@ -358,7 +358,7 @@ class TelegramNotifier:
             "🚨 <b>Error!</b>\n\n"
             "<b>Context:</b> %s\n"
             "<b>Error:</b> <code>%s</code>\n"
-            "<b>Time:</b> %s"
+            "<b>الوقت:</b> %s"
         ) % (
             context or "Unknown", error,
             datetime.now(timezone.utc).strftime("%H:%M:%S")
@@ -374,7 +374,7 @@ class TelegramNotifier:
             "<b>Total:</b> %d | <b>Working:</b> %d\n"
             "<b>Best:</b> <code>%s</code>\n"
             "<b>Speed:</b> <code>%.2fs</code>\n"
-            "<b>Time:</b> %s"
+            "<b>الوقت:</b> %s"
         ) % (
             total, working, best, response_time,
             datetime.now(timezone.utc).strftime("%H:%M:%S")
@@ -387,7 +387,7 @@ class TelegramNotifier:
             "✅ <b>Test Message</b>\n\n"
             "<b>Bot is running!</b>\n"
             "<b>Time:</b> %s\n\n"
-            "If you see this, Telegram is working correctly."
+            "إذا رأيت هذه الرسالة، فإن تليجرام يعمل بشكل صحيح."
         ) % datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
 
         return await self.force_send(msg)
@@ -455,9 +455,9 @@ class ProxyManager:
         return False, float('inf')
 
     async def refresh_proxies(self) -> Optional[str]:
-        logging.info("Fetching proxies...")
+        logging.info("جلب البروكسيات...")
         proxy_list = self.fetch_proxies_sync()
-        logging.info("Fetched %d proxies" % len(proxy_list))
+        logging.info("تم جلب %d بروكسي" % len(proxy_list))
 
         if not proxy_list:
             return None
@@ -473,7 +473,7 @@ class ProxyManager:
                 if alive:
                     working.append({"url": proxy, "time": response_time})
 
-            logging.info("Tested %d/%d, working so far: %d" % (
+            logging.info("تم اختبار %d/%d، يعمل حتى الآن: %d" % (
                 min(i+50, len(proxy_list)), len(proxy_list), len(working)
             ))
 
@@ -482,7 +482,7 @@ class ProxyManager:
             self.working_proxies = working
             self.best_proxy = working[0]["url"]
             self.last_refresh = time.time()
-            logging.info("Best proxy: %s (%.2fs)" % (self.best_proxy, working[0]["time"]))
+            logging.info("أفضل بروكسي: %s (%.2fث)" % (self.best_proxy, working[0]["time"]))
             return self.best_proxy
 
         return None
@@ -539,19 +539,19 @@ class Position:
         profit_pct = self.calculate_profit_pct(current_price)
 
         if net_profit <= 0:
-            return False, "Waiting for profit ($%.4f)" % net_profit
+            return False, "في انتظار الربح ($%.4f)" % net_profit
 
         if net_profit < min_profit_usdt:
-            return False, "Small profit ($%.4f)" % net_profit
+            return False, "ربح صغير ($%.4f)" % net_profit
 
         if profit_pct < min_profit_pct:
-            return False, "Small %% (%.2f%%)" % profit_pct
+            return False, "نسبة صغيرة (%.2f%%)" % profit_pct
 
         for target in sorted(profit_targets, reverse=True):
             if profit_pct >= target:
-                return True, "Target %.1f%% (+$%.4f)" % (target, net_profit)
+                return True, "هدف %.1f%% (+$%.4f)" % (target, net_profit)
 
-        return True, "Profit (+$%.4f, %.2f%%)" % (net_profit, profit_pct)
+        return True, "ربح (+$%.4f, %.2f%%)" % (net_profit, profit_pct)
 
     def execute_sell(self, sell_price: float) -> Dict:
         self.sell_price = sell_price
@@ -659,7 +659,7 @@ class PriceEngine:
                             self.last_price = float(data.get("price", 0))
                             return {"last": self.last_price, "source": "binance_proxy"}
             except Exception as e:
-                logging.warning("Proxy fetch failed: %s" % str(e))
+                logging.warning("فشل جلب البروكسي: %s" % str(e))
 
         # Fallback: CoinGecko
         try:
@@ -673,7 +673,7 @@ class PriceEngine:
                         self.last_price = data.get("bitcoin", {}).get("usd", 0)
                         return {"last": self.last_price, "source": "coingecko"}
         except Exception as e:
-            logging.error("All price sources failed: %s" % str(e))
+            logging.error("فشلت جميع مصادر السعر: %s" % str(e))
             raise
 
 
@@ -692,18 +692,20 @@ class TradingBot:
         self.processed_signals = set()
         self.last_buy_time = 0
         self._cycle_count = 0
+        self.start_time = 0
+        self.max_runtime_hours = 6  # ⏱️ عدد الساعات حتى التوقف التلقائي
 
     async def initialize(self):
         logging.info("=" * 60)
-        logging.info("BOT INITIALIZATION")
+        logging.info("تهيئة البوت")
         logging.info("=" * 60)
 
         # Refresh proxies
         best_proxy = await self.proxy_manager.refresh_proxies()
         if best_proxy:
-            logging.info("Using proxy: %s" % best_proxy)
+            logging.info("استخدام البروكسي: %s" % best_proxy)
         else:
-            logging.warning("No proxy, using CoinGecko fallback")
+            logging.warning("لا يوجد بروكسي، استخدام CoinGecko كبديل")
 
     async def check_buy(self, now: datetime) -> Optional[Position]:
         if self.positions.get_open_count() >= self.config.max_buys:
@@ -729,7 +731,7 @@ class TradingBot:
             price_data = await self.price_engine.get_price()
             current_price = price_data["last"]
         except Exception as e:
-            logging.error("Price fetch failed: %s" % str(e))
+            logging.error("فشل في جلب السعر: %s" % str(e))
             return None
 
         raw_amount = self.config.trade_usdt_per_buy / current_price
@@ -749,7 +751,7 @@ class TradingBot:
             pos.id, current_price, amount, total_cost, buy_reason
         )
 
-        logging.info("BUY #%s: %.6f BTC @ %.2f" % (pos.id, amount, current_price))
+        logging.info("شراء #%s: %.6f BTC @ %.2f" % (pos.id, amount, current_price))
         return pos
 
     async def check_sell(self):
@@ -757,7 +759,7 @@ class TradingBot:
             price_data = await self.price_engine.get_price()
             current_price = price_data["last"]
         except Exception as e:
-            logging.error("Price fetch failed: %s" % str(e))
+            logging.error("فشل في جلب السعر: %s" % str(e))
             return
 
         ready = await self.positions.check_all_positions(current_price)
@@ -771,11 +773,22 @@ class TradingBot:
                         pos.net_profit, pos.profit_pct, reason,
                         self.positions.total_realized_profit
                     )
-                    logging.info("SELL #%s: +$%.4f (%.2f%%)" % (pos.id, pos.net_profit, pos.profit_pct))
+                    logging.info("بيع #%s: +$%.4f (%.2f%%)" % (pos.id, pos.net_profit, pos.profit_pct))
             except Exception as e:
-                logging.error("Sell failed: %s" % str(e))
+                logging.error("فشل البيع: %s" % str(e))
 
     async def run_cycle(self):
+        # ⏱️ فحص وقت التشغيل - إيقاف تلقائي بعد 6 ساعات
+        elapsed_hours = (time.time() - self.start_time) / 3600
+        if elapsed_hours >= self.max_runtime_hours:
+            logging.info("⏱️ تم الوصول إلى الحد الأقصى للوقت (%.1f ساعة). إيقاف البوت..." % self.max_runtime_hours)
+            await self.notifier.send("⏱️ <b>انتهى وقت التشغيل</b>
+
+تم تشغيل البوت لمدة %.1f ساعة.
+جاري الإيقاف الآن... ⏹️" % elapsed_hours)
+            self.running = False
+            return
+
         now = datetime.now(timezone.utc)
         await self.check_sell()
         await self.check_buy(now)
@@ -783,6 +796,8 @@ class TradingBot:
 
     async def run(self):
         self.running = True
+        self.start_time = time.time()  # ⏱️ تسجيل وقت البدء
+        stop_time = self.start_time + (self.max_runtime_hours * 3600)
 
         async with self.notifier:
             await self.initialize()
@@ -791,23 +806,27 @@ class TradingBot:
             proxy_info = self.proxy_manager.best_proxy or "CoinGecko Fallback"
             await self.notifier.notify_startup(proxy_info, "LIVE")
 
+            # ⏱️ إشعار بوقت التوقف التلقائي
+            stop_at = datetime.fromtimestamp(stop_time, timezone.utc).strftime("%H:%M:%S")
+            await self.notifier.send("⏱️ <b>وقت التوقف التلقائي:</b> <code>%s</code> UTC (بعد %d ساعة)" % (stop_at, self.max_runtime_hours))
+
             # Send test message
             test_success = await self.notifier.notify_test()
             if test_success:
-                logging.info("✅ Test message sent successfully")
+                logging.info("✅ تم إرسال رسالة الاختبار بنجاح")
             else:
-                logging.error("❌ Test message failed")
+                logging.error("❌ فشلت رسالة الاختبار")
 
             # Log Telegram stats
             stats = self.notifier.get_stats()
-            logging.info("Telegram stats: %s" % json.dumps(stats))
+            logging.info("إحصائيات تليجرام: %s" % json.dumps(stats))
 
             while self.running:
                 start = time.time()
                 try:
                     await self.run_cycle()
                 except Exception as e:
-                    logging.error("Cycle error: %s" % str(e))
+                    logging.error("خطأ في الدورة: %s" % str(e))
                     await self.notifier.notify_error(str(e), "Main cycle")
 
                 elapsed = time.time() - start
@@ -837,10 +856,10 @@ if __name__ == "__main__":
     token = os.getenv("TELEGRAM_TOKEN", "")
     chat_id = os.getenv("TELEGRAM_CHAT_ID", "")
     logging.info("=" * 60)
-    logging.info("ENVIRONMENT CHECK")
+    logging.info("فحص البيئة")
     logging.info("=" * 60)
-    logging.info("TELEGRAM_TOKEN: %s (length: %d)" % ("SET" if token else "EMPTY", len(token)))
-    logging.info("TELEGRAM_CHAT_ID: %s (length: %d)" % ("SET" if chat_id else "EMPTY", len(chat_id)))
+    logging.info("TELEGRAM_TOKEN: %s (الطول: %d)" % ("SET" if token else "EMPTY", len(token)))
+    logging.info("TELEGRAM_CHAT_ID: %s (الطول: %d)" % ("SET" if chat_id else "EMPTY", len(chat_id)))
     logging.info("=" * 60)
 
     bot = TradingBot()
@@ -855,8 +874,7 @@ if __name__ == "__main__":
     try:
         asyncio.run(bot.run())
     except KeyboardInterrupt:
-        logging.info("Stopped by user")
+        logging.info("توقف بواسطة المستخدم")
     except Exception as e:
-        logging.critical("Fatal: %s" % str(e))
+        logging.critical("خطأ فادح: %s" % str(e))
         raise
-
