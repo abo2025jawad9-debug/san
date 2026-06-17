@@ -1,8 +1,44 @@
 {
-  "open_positions": [],
-  "buy_count": 3,
-  "total_usdt_spent": 20.616800000000175,
-  "processed_signals": [],
+  "open_positions": [
+    {
+      "id": 4,
+      "price": 65665.99,
+      "amount": 9.990000000015264e-05,
+      "signal_time": "2026-06-16 23:29",
+      "actual_spent": 6.567000999999436,
+      "usdt_before_buy": 9999.33781983,
+      "usdt_after_buy": 9992.77081883,
+      "buy_reason": "\u0625\u0634\u0627\u0631\u0629 \u062c\u062f\u0648\u0644",
+      "min_sell_price": 65994.31995,
+      "sell_multiplier": 1.005,
+      "buy_fee": 0.001,
+      "sell_fee": 0.001,
+      "total_fees": 0.007,
+      "created_at": "23:24:30"
+    },
+    {
+      "id": 5,
+      "price": 65675.99,
+      "amount": 9.98999999999306e-05,
+      "signal_time": "2026-06-16 23:59",
+      "actual_spent": 6.567598999999973,
+      "usdt_before_buy": 9992.77081883,
+      "usdt_after_buy": 9986.20321983,
+      "buy_reason": "\u0625\u0634\u0627\u0631\u0629 \u062c\u062f\u0648\u0644",
+      "min_sell_price": 66004.36995,
+      "sell_multiplier": 1.005,
+      "buy_fee": 0.001,
+      "sell_fee": 0.001,
+      "total_fees": 0.007,
+      "created_at": "23:54:36"
+    }
+  ],
+  "buy_count": 5,
+  "total_usdt_spent": 33.751399999999585,
+  "processed_signals": [
+    "2026-06-16 23:29",
+    "2026-06-16 23:59"
+  ],
   "total_profit": 6.017364085306656,
   "total_loss": 0.0,
   "trades_history": [
@@ -58,7 +94,42 @@
       "usdt_before": 9993.3703187,
       "usdt_after": 9999.33781983,
       "time": "07:39:57"
+    },
+    {
+      "type": "buy",
+      "position_id": 4,
+      "price": 65665.99,
+      "amount": 9.990000000015264e-05,
+      "actual_spent": 6.567000999999436,
+      "buy_fee": 0.001,
+      "sell_fee": 0.001,
+      "total_fees": 0.007,
+      "usdt_before": 9999.33781983,
+      "usdt_after": 9992.77081883,
+      "buy_reason": "\u0625\u0634\u0627\u0631\u0629 \u062c\u062f\u0648\u0644",
+      "time": "23:24:30"
+    },
+    {
+      "type": "buy",
+      "position_id": 5,
+      "price": 65675.99,
+      "amount": 9.98999999999306e-05,
+      "actual_spent": 6.567598999999973,
+      "buy_fee": 0.001,
+      "sell_fee": 0.001,
+      "total_fees": 0.007,
+      "usdt_before": 9992.77081883,
+      "usdt_after": 9986.20321983,
+      "buy_reason": "\u0625\u0634\u0627\u0631\u0629 \u062c\u062f\u0648\u0644",
+      "time": "23:54:36"
     }
   ],
-  "total_fees_paid": 0.021061361387631976
+  "total_fees_paid": 0.035061361387631974,
+  "daily_low_price": 54616.89,
+  "daily_low_time": "2026-06-17 01:35",
+  "bought_at_daily_low": false,
+  "last_fees_update": "2026-06-16 23:54:43",
+  "cached_maker_fee": 0.001,
+  "cached_taker_fee": 0.001,
+  "bnb_discount_active": false
 }
