@@ -24,10 +24,10 @@ import re
 
 @dataclass
 class Config:
-    api_key: str = os.getenv("BINANCE_API_KEY", "")
-    secret: str = os.getenv("BINANCE_SECRET", "")
-    telegram_token: str = os.getenv("TELEGRAM_TOKEN", "")
-    telegram_chat_id: str = os.getenv("TELEGRAM_CHAT_ID", "")
+    api_key: str = 'dmyc2X0llvZ1A1zGAy9wfkqJHqZC20Uv04iYwBmOrnBMLJlnH7SZOsPt4eYGYnoJ'
+    secret: str = 'uVax1wfQo0Ns1XIhGgsW4j2yjgB9VPlQWYzWvt1sAeg640WpGRCSqFMPvVyNtu6S'
+    telegram_token: str = '8777604170:AAGVQWj7KtRZWKjZQ0BuyIZCHJ3FCmFgQP4'
+    telegram_chat_id: str = '6390985342'
 
     max_buys: int = 7
     max_total_usdt: float = 75.0
