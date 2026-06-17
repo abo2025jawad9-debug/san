@@ -1,8 +1,3 @@
-"""
-Trading Bot - Telegram Debug Version
-With clear diagnostics and forced notifications
-"""
-
 import asyncio
 import aiohttp
 import json
@@ -15,7 +10,6 @@ from dataclasses import dataclass
 from typing import List, Dict, Optional, Callable, Any
 from collections import deque
 import uuid
-import requests
 import re
 
 # ==========================================
@@ -282,14 +276,14 @@ class TelegramNotifier:
             return
 
         msg = (
-            "🚀 <b>Bot Started! (%s MODE)</b>\n\n"
-            "<b>Settings:</b>\n"
-            "• Min Profit: $%.2f / %.1f%%\n"
-            "• Profit Targets: %s\n"
-            "• Cooldown: %d min\n"
-            "• Check Interval: %d sec\n"
-            "• Proxy: %s\n\n"
-            "<b>Policy: NEVER sell at loss</b>\n"
+            "🚀 <b>بدأ البوت! (وضع %s)</b>\n\n"
+            "<b>الإعدادات:</b>\n"
+            "• الحد الأدنى للربح: $%.2f / %.1f%%\n"
+            "• أهداف الربح: %s\n"
+            "• فترة الانتظار: %d دقيقة\n"
+            "• فترة الفحص: %d ثانية\n"
+            "• البروكسي: %s\n\n"
+            "<b>السياسة: لا تبيع أبداً بخسارة</b>\n"
             "<b>الوقت:</b> %s"
         ) % (
             mode,
@@ -314,11 +308,11 @@ class TelegramNotifier:
             return
 
         msg = (
-            "🟢 <b>Buy Successful! #%s</b>\n\n"
-            "<b>Price:</b> <code>%.2f</code> USDT\n"
-            "<b>Amount:</b> <code>%.6f</code> BTC\n"
-            "<b>Total Cost:</b> <code>%.4f</code> USDT\n"
-            "<b>Reason:</b> %s\n"
+            "🟢 <b>تم الشراء بنجاح! #%s</b>\n\n"
+            "<b>السعر:</b> <code>%.2f</code> USDT\n"
+            "<b>الكمية:</b> <code>%.6f</code> BTC\n"
+            "<b>التكلفة الإجمالية:</b> <code>%.4f</code> USDT\n"
+            "<b>السبب:</b> %s\n"
             "<b>الوقت:</b> %s"
         ) % (
             pos_id, buy_price, amount, total_cost, reason,
@@ -335,12 +329,12 @@ class TelegramNotifier:
         emoji = "🚀🚀🚀" if profit_pct >= 5 else "🚀🚀" if profit_pct >= 3 else "🚀" if profit_pct >= 1 else "✅"
 
         msg = (
-            "%s <b>Sell Successful! #%s</b>\n\n"
-            "<b>Buy:</b> <code>%.2f</code> | <b>Sell:</b> <code>%.2f</code>\n"
-            "<b>Amount:</b> <code>%.6f</code> BTC\n\n"
-            "<b>Net Profit: +$%.4f (%.2f%%)</b>\n"
-            "<b>Reason:</b> %s\n"
-            "<b>Portfolio Total:</b> <code>$%.4f</code>\n"
+            "%s <b>تم البيع بنجاح! #%s</b>\n\n"
+            "<b>الشراء:</b> <code>%.2f</code> | <b>البيع:</b> <code>%.2f</code>\n"
+            "<b>الكمية:</b> <code>%.6f</code> BTC\n\n"
+            "<b>صافي الربح: +$%.4f (%.2f%%)</b>\n"
+            "<b>السبب:</b> %s\n"
+            "<b>إجمالي المحفظة:</b> <code>$%.4f</code>\n"
             "<b>الوقت:</b> %s"
         ) % (
             emoji, pos_id, buy_price, sell_price, amount,
@@ -355,9 +349,9 @@ class TelegramNotifier:
             return
 
         msg = (
-            "🚨 <b>Error!</b>\n\n"
-            "<b>Context:</b> %s\n"
-            "<b>Error:</b> <code>%s</code>\n"
+            "🚨 <b>خطأ!</b>\n\n"
+            "<b>السياق:</b> %s\n"
+            "<b>الخطأ:</b> <code>%s</code>\n"
             "<b>الوقت:</b> %s"
         ) % (
             context or "Unknown", error,
@@ -370,10 +364,10 @@ class TelegramNotifier:
             return
 
         msg = (
-            "🔄 <b>Proxy Refresh</b>\n\n"
-            "<b>Total:</b> %d | <b>Working:</b> %d\n"
-            "<b>Best:</b> <code>%s</code>\n"
-            "<b>Speed:</b> <code>%.2fs</code>\n"
+            "🔄 <b>تحديث البروكسي</b>\n\n"
+            "<b>الإجمالي:</b> %d | <b>يعمل:</b> %d\n"
+            "<b>الأفضل:</b> <code>%s</code>\n"
+            "<b>السرعة:</b> <code>%.2fث</code>\n"
             "<b>الوقت:</b> %s"
         ) % (
             total, working, best, response_time,
@@ -384,9 +378,9 @@ class TelegramNotifier:
     async def notify_test(self):
         """إشعار اختبار - يُرسل فوراً"""
         msg = (
-            "✅ <b>Test Message</b>\n\n"
-            "<b>Bot is running!</b>\n"
-            "<b>Time:</b> %s\n\n"
+            "✅ <b>رسالة اختبار</b>\n\n"
+            "<b>البوت يعمل!</b>\n"
+            "<b>الوقت:</b> %s\n\n"
             "إذا رأيت هذه الرسالة، فإن تليجرام يعمل بشكل صحيح."
         ) % datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
 
@@ -412,7 +406,8 @@ class ProxyManager:
         self.best_proxy: Optional[str] = None
         self.last_refresh = 0
 
-    def fetch_proxies_sync(self) -> List[str]:
+    async def fetch_proxies_async(self) -> List[str]:
+        """جلب البروكسيات بشكل غير متزامن عبر aiohttp"""
         sources = [
             "https://api.proxyscrape.com/v2/?request=displayproxies&protocol=http&timeout=10000&country=all&ssl=all&anonymity=all",
             "https://raw.githubusercontent.com/TheSpeedX/PROXY-List/master/http.txt",
@@ -420,20 +415,22 @@ class ProxyManager:
         ]
 
         all_proxies = []
-        for source in sources:
-            try:
-                resp = requests.get(source, timeout=15, headers={
-                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-                })
-                if resp.status_code == 200:
-                    pattern = r'\b(?:[0-9]{1,3}\.){3}[0-9]{1,3}:[0-9]{2,5}\b'
-                    matches = re.findall(pattern, resp.text)
-                    for match in matches:
-                        proxy = "http://%s" % match
-                        if proxy not in all_proxies:
-                            all_proxies.append(proxy)
-            except Exception as e:
-                logging.warning("Source failed: %s" % str(e))
+        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
+
+        async with aiohttp.ClientSession() as session:
+            for source in sources:
+                try:
+                    async with session.get(source, timeout=aiohttp.ClientTimeout(total=15), headers=headers) as resp:
+                        if resp.status == 200:
+                            text = await resp.text()
+                            pattern = r'\b(?:[0-9]{1,3}\.){3}[0-9]{1,3}:[0-9]{2,5}\b'
+                            matches = re.findall(pattern, text)
+                            for match in matches:
+                                proxy = "http://%s" % match
+                                if proxy not in all_proxies:
+                                    all_proxies.append(proxy)
+                except Exception as e:
+                    logging.warning("فشل المصدر: %s" % str(e))
 
         return list(dict.fromkeys(all_proxies))[:self.max_proxies]
 
@@ -456,7 +453,7 @@ class ProxyManager:
 
     async def refresh_proxies(self) -> Optional[str]:
         logging.info("جلب البروكسيات...")
-        proxy_list = self.fetch_proxies_sync()
+        proxy_list = await self.fetch_proxies_async()
         logging.info("تم جلب %d بروكسي" % len(proxy_list))
 
         if not proxy_list:
@@ -518,6 +515,11 @@ class Position:
         self.sell_time = None
         self.sell_reason = ""
         self.highest_price = buy_price
+
+    def update_highest_price(self, current_price: float):
+        """تحديث أعلى سعر وصل إليه المركز"""
+        if current_price > self.highest_price:
+            self.highest_price = current_price
 
     @property
     def is_open(self) -> bool:
@@ -640,6 +642,41 @@ class PriceEngine:
     def __init__(self, proxy_manager: ProxyManager):
         self.proxy_manager = proxy_manager
         self.last_price = 0.0
+        self.price_history: deque = deque(maxlen=28800)  # 24 ساعة من الأسعار
+        self.hourly_prices: deque = deque(maxlen=24)  # سعر كل ساعة
+        self.last_hourly_save = 0
+
+    def add_price(self, price: float):
+        """إضافة سعر إلى السجل"""
+        self.price_history.append(price)
+        # حفظ سعر كل ساعة
+        now = time.time()
+        if now - self.last_hourly_save >= 3600 or not self.hourly_prices:
+            self.hourly_prices.append(price)
+            self.last_hourly_save = now
+
+    def get_24h_low(self) -> float:
+        """أدنى سعر في 24 ساعة"""
+        if not self.price_history:
+            return float('inf')
+        return min(self.price_history)
+
+    def get_price_1h_ago(self) -> Optional[float]:
+        """سعر قبل ساعة"""
+        if len(self.hourly_prices) >= 2:
+            return self.hourly_prices[-2]  # السعر قبل الأخير (قبل ساعة)
+        return None
+
+    def is_real_drop(self, current_price: float, drop_threshold: float = 0.02) -> bool:
+        """
+        هل هذا نزول حقيقي؟
+        الشرط: السعر قبل ساعة أعلى من السعر الحالي بنسبة drop_threshold
+        """
+        price_1h_ago = self.get_price_1h_ago()
+        if price_1h_ago is None:
+            return False
+        price_drop = (price_1h_ago - current_price) / price_1h_ago
+        return price_drop >= drop_threshold
 
     async def get_price(self) -> Dict:
         proxy_dict = self.proxy_manager.get_proxy_dict()
@@ -694,6 +731,7 @@ class TradingBot:
         self._cycle_count = 0
         self.start_time = 0
         self.max_runtime_hours = 6  # [TIME] عدد الساعات حتى التوقف التلقائي
+        self.price_history: deque = deque(maxlen=28800)  # سجل الأسعار (24 ساعة × 3600 ثانية / 3 ثواني فحص)
 
     async def initialize(self):
         logging.info("=" * 60)
@@ -707,31 +745,56 @@ class TradingBot:
         else:
             logging.warning("لا يوجد بروكسي، استخدام CoinGecko كبديل")
 
-    async def check_buy(self, now: datetime) -> Optional[Position]:
+    async def check_buy(self, now: datetime, current_price: float = None) -> Optional[Position]:
         if self.positions.get_open_count() >= self.config.max_buys:
             return None
 
         if time.time() - self.last_buy_time < self.config.cooldown_seconds:
             return None
 
+        # جلب السعر إذا لم يكن متوفراً
+        if current_price is None:
+            try:
+                price_data = await self.price_engine.get_price()
+                current_price = price_data["last"]
+            except Exception as e:
+                logging.error("فشل في جلب السعر: %s" % str(e))
+                return None
+
         time_str = now.strftime("%Y-%m-%d %H:%M")
         buy_reason = None
+        condition_met = False
 
+        # === الشرط الأول: وقت الجدول + نزول حقيقي ===
         for signal in self.config.schedule:
             if signal["time"] == time_str and signal["time"] not in self.processed_signals:
                 if signal["type"] in ["نزول", "صعود ونزول"]:
-                    buy_reason = "Signal: %s" % signal["type"]
+                    # تحقق من النزول الحقيقي: السعر قبل ساعة أعلى من الحالي
+                    if self.price_engine.is_real_drop(current_price, drop_threshold=0.01):
+                        buy_reason = "نزول حقيقي عند %s | السعر قبل ساعة: %.2f | الحالي: %.2f" % (
+                            signal["time"],
+                            self.price_engine.get_price_1h_ago() or 0,
+                            current_price
+                        )
+                        condition_met = True
+                    else:
+                        logging.info("وقت الإشارة %s وصل لكن لا يوجد نزول حقيقي (السعر قبل ساعة: %.2f, الحالي: %.2f)" % (
+                            signal["time"],
+                            self.price_engine.get_price_1h_ago() or 0,
+                            current_price
+                        ))
                     self.processed_signals.add(signal["time"])
                     break
 
-        if not buy_reason:
-            return None
+        # === الشرط الثاني: أدنى سعر في 24 ساعة ===
+        if not condition_met:
+            low_24h = self.price_engine.get_24h_low()
+            if current_price <= low_24h * 1.001:  # هامش 0.1% للتسامح
+                buy_reason = "أدنى سعر 24 ساعة: %.2f | السعر الحالي: %.2f" % (low_24h, current_price)
+                condition_met = True
+                logging.info("✅ شرط أدنى سعر 24 ساعة متحقق!")
 
-        try:
-            price_data = await self.price_engine.get_price()
-            current_price = price_data["last"]
-        except Exception as e:
-            logging.error("فشل في جلب السعر: %s" % str(e))
+        if not condition_met or not buy_reason:
             return None
 
         raw_amount = self.config.trade_usdt_per_buy / current_price
@@ -740,6 +803,7 @@ class TradingBot:
         buy_fee = (current_price * amount) * self.config.fee_rate
         total_cost = (current_price * amount) + buy_fee
 
+        # Paper Trading - محاكاة شراء (لا يُنفذ على Binance)
         pos = await self.positions.create_position(
             current_price, amount, buy_fee, total_cost, buy_reason
         )
@@ -751,21 +815,23 @@ class TradingBot:
             pos.id, current_price, amount, total_cost, buy_reason
         )
 
-        logging.info("شراء #%s: %.6f BTC @ %.2f" % (pos.id, amount, current_price))
+        logging.info("شراء وهمي #%s: %.6f BTC @ %.2f | السبب: %s" % (pos.id, amount, current_price, buy_reason))
         return pos
 
-    async def check_sell(self):
-        try:
-            price_data = await self.price_engine.get_price()
-            current_price = price_data["last"]
-        except Exception as e:
-            logging.error("فشل في جلب السعر: %s" % str(e))
-            return
+    async def check_sell(self, current_price: float = None):
+        if current_price is None:
+            try:
+                price_data = await self.price_engine.get_price()
+                current_price = price_data["last"]
+            except Exception as e:
+                logging.error("فشل في جلب السعر: %s" % str(e))
+                return
 
         ready = await self.positions.check_all_positions(current_price)
 
         for pos, reason in ready:
             try:
+                # Paper Trading - محاكاة بيع (لا يُنفذ على Binance)
                 result = await self.positions.close_position(pos.id, current_price, reason)
                 if result:
                     await self.notifier.notify_sell_success(
@@ -773,7 +839,9 @@ class TradingBot:
                         pos.net_profit, pos.profit_pct, reason,
                         self.positions.total_realized_profit
                     )
-                    logging.info("بيع #%s: +$%.4f (%.2f%%)" % (pos.id, pos.net_profit, pos.profit_pct))
+                    logging.info("بيع وهمي #%s: +$%.4f (%.2f%%) (Paper Trading)" % (
+                        pos.id, pos.net_profit, pos.profit_pct
+                    ))
             except Exception as e:
                 logging.error("فشل البيع: %s" % str(e))
 
@@ -786,9 +854,18 @@ class TradingBot:
             self.running = False
             return
 
+        # جلب السعر الحالي وتسجيله
+        try:
+            price_data = await self.price_engine.get_price()
+            current_price = price_data["last"]
+            self.price_engine.add_price(current_price)
+        except Exception as e:
+            logging.error("فشل جلب السعر: %s" % str(e))
+            return
+
         now = datetime.now(timezone.utc)
-        await self.check_sell()
-        await self.check_buy(now)
+        await self.check_sell(current_price)
+        await self.check_buy(now, current_price)
         self._cycle_count += 1
 
     async def run(self):
