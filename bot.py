@@ -35,7 +35,7 @@ class Config:
     min_profit_pct: float = 0.5
     profit_targets: List[float] = None
 
-    cooldown_seconds: int = 300
+    cooldown_seconds: int = 6000
 
     max_retries: int = 5
     base_retry_delay: float = 1.0
