@@ -1,3 +1,8 @@
+"""
+Trading Bot - Telegram Debug Version
+With clear diagnostics and forced notifications
+"""
+
 import asyncio
 import aiohttp
 import json
@@ -732,6 +737,9 @@ class TradingBot:
         self.start_time = 0
         self.max_runtime_hours = 6  # [TIME] عدد الساعات حتى التوقف التلقائي
         self.price_history: deque = deque(maxlen=28800)  # سجل الأسعار (24 ساعة × 3600 ثانية / 3 ثواني فحص)
+        self.low24h_buy_count = 0       # عدد مرات الشراء عبر شرط أدنى سعر 24 ساعة
+        self.max_low24h_buys = 2        # الحد الأقصى للشراء عبر هذا الشرط قبل البيع
+        self.last_low24h_buy_price = 0.0  # سعر آخر شراء عبر هذا الشرط
 
     async def initialize(self):
         logging.info("=" * 60)
@@ -788,11 +796,28 @@ class TradingBot:
 
         # === الشرط الثاني: أدنى سعر في 24 ساعة ===
         if not condition_met:
-            low_24h = self.price_engine.get_24h_low()
-            if current_price <= low_24h * 1.001:  # هامش 0.1% للتسامح
-                buy_reason = "أدنى سعر 24 ساعة: %.2f | السعر الحالي: %.2f" % (low_24h, current_price)
-                condition_met = True
-                logging.info("✅ شرط أدنى سعر 24 ساعة متحقق!")
+            # تحقق من عدم تجاوز الحد الأقصى للشراء عبر هذا الشرط
+            if self.low24h_buy_count >= self.max_low24h_buys:
+                logging.info("⚠️ تم تجاوز الحد الأقصى للشراء عبر أدنى سعر 24 ساعة (%d/%d) - في انتظار البيع" % (
+                    self.low24h_buy_count, self.max_low24h_buys
+                ))
+            else:
+                low_24h = self.price_engine.get_24h_low()
+                # تأكد من أن السعر أقل من آخر شراء (لمنع الشراء بنفس السعر)
+                if current_price <= low_24h * 1.001 and current_price < self.last_low24h_buy_price * 0.995:
+                    buy_reason = "أدنى سعر 24 ساعة: %.2f | السعر الحالي: %.2f | الشراء #%d/%d" % (
+                        low_24h, current_price, self.low24h_buy_count + 1, self.max_low24h_buys
+                    )
+                    condition_met = True
+                    self.low24h_buy_count += 1
+                    self.last_low24h_buy_price = current_price
+                    logging.info("✅ شرط أدنى سعر 24 ساعة متحقق! (الشراء %d/%d)" % (
+                        self.low24h_buy_count, self.max_low24h_buys
+                    ))
+                elif current_price <= low_24h * 1.001:
+                    logging.info("⚠️ السعر أدنى 24 ساعة لكنه أعلى من آخر شراء بقليل (%.2f vs %.2f) - تخطي" % (
+                        current_price, self.last_low24h_buy_price
+                    ))
 
         if not condition_met or not buy_reason:
             return None
@@ -842,6 +867,10 @@ class TradingBot:
                     logging.info("بيع وهمي #%s: +$%.4f (%.2f%%) (Paper Trading)" % (
                         pos.id, pos.net_profit, pos.profit_pct
                     ))
+                    # إعادة تعيين عداد الشراء عبر أدنى سعر 24 ساعة بعد البيع
+                    self.low24h_buy_count = 0
+                    self.last_low24h_buy_price = 0.0
+                    logging.info("🔄 تم إعادة تعيين عداد أدنى سعر 24 ساعة بعد البيع")
             except Exception as e:
                 logging.error("فشل البيع: %s" % str(e))
 
