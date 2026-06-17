@@ -1,6 +1,6 @@
 """
-Binance Trading Bot - Fixed Syntax Error
-Arabic text quotes fixed
+Binance Trading Bot - With Proxy Support for GitHub Actions
+Fixes: ExchangeNotAvailable 451 - Restricted Location
 """
 
 import ccxt
@@ -11,11 +11,96 @@ import json
 import os
 import time
 import logging
+import requests
 from datetime import datetime, timezone, timedelta
 from dataclasses import dataclass
 from typing import List, Dict, Optional, Callable, Any
 from collections import deque
 import uuid
+
+# ==========================================
+# PROXY MANAGER
+# ==========================================
+
+class ProxyManager:
+    """مدير بروكسي - يجلب ويختبر البروكسيات تلقائياً"""
+
+    PROXY_SOURCES = [
+        "https://api.proxyscrape.com/v2/?request=displayproxies&protocol=http&timeout=5000&country=all&ssl=yes&anonymity=all",
+        "https://raw.githubusercontent.com/TheSpeedX/PROXY-List/master/http.txt",
+        "https://raw.githubusercontent.com/clarketm/proxy-list/master/proxy-list-raw.txt",
+    ]
+
+    TEST_URL = "https://testnet.binance.vision/api/v3/ping"
+
+    def __init__(self):
+        self.working_proxy = None
+        self.proxy_list = []
+        self.last_fetch = 0
+
+    def fetch_proxies(self) -> List[str]:
+        """جلب قائمة بروكسيات من المصادر"""
+        proxies = []
+        for source in self.PROXY_SOURCES:
+            try:
+                resp = requests.get(source, timeout=10)
+                if resp.status_code == 200:
+                    lines = [line.strip() for line in resp.text.strip().split('\n') if line.strip()]
+                    for line in lines:
+                        # استخراج IP:Port
+                        if ':' in line and not line.startswith('#'):
+                            parts = line.split(':')
+                            if len(parts) >= 2:
+                                ip = parts[0]
+                                port = parts[1].split()[0] if ' ' in parts[1] else parts[1]
+                                proxies.append(f"http://{ip}:{port}")
+            except Exception as e:
+                logging.warning("Failed to fetch from %s: %s" % (source, str(e)))
+
+        self.proxy_list = list(set(proxies))  # إزالة التكرار
+        logging.info("Fetched %d proxies" % len(self.proxy_list))
+        return self.proxy_list
+
+    def test_proxy(self, proxy_url: str) -> bool:
+        """اختبار بروكسي واحد"""
+        try:
+            proxies = {"http": proxy_url, "https": proxy_url}
+            resp = requests.get(self.TEST_URL, proxies=proxies, timeout=8)
+            return resp.status_code == 200
+        except:
+            return False
+
+    def find_working_proxy(self, max_test: int = 30) -> Optional[str]:
+        """البحث عن بروكسي يعمل"""
+        logging.info("Searching for working proxy...")
+
+        proxies = self.fetch_proxies()
+        if not proxies:
+            logging.warning("No proxies fetched, trying direct connection")
+            return None
+
+        # اختبار أول N بروكسي
+        for i, proxy in enumerate(proxies[:max_test]):
+            if self.test_proxy(proxy):
+                logging.info("Found working proxy: %s (tested %d)" % (proxy, i + 1))
+                self.working_proxy = proxy
+                return proxy
+
+        logging.warning("No working proxy found, will try direct connection")
+        return None
+
+    def get_proxy_dict(self) -> Optional[Dict]:
+        """الحصول على قاموس البروكسي لـ CCXT"""
+        if not self.working_proxy:
+            self.find_working_proxy()
+
+        if self.working_proxy:
+            return {
+                "http": self.working_proxy,
+                "https": self.working_proxy
+            }
+        return None
+
 
 # ==========================================
 # CONFIGURATION
@@ -267,7 +352,7 @@ class PositionManager:
 
 
 # ==========================================
-# TELEGRAM NOTIFIER - FIXED
+# TELEGRAM NOTIFIER
 # ==========================================
 
 class TelegramNotifier:
@@ -325,8 +410,6 @@ class TelegramNotifier:
     async def send(self, message: str):
         await self.message_queue.put(message)
 
-    # ============ BUY NOTIFICATIONS ============
-
     async def notify_buy_success(self, pos: Position, order_info: Dict = None):
         msg = (
             "🟢 <b>Buy Successful!</b>\n\n"
@@ -356,8 +439,6 @@ class TelegramNotifier:
             datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
         )
         await self.send(msg)
-
-    # ============ SELL NOTIFICATIONS ============
 
     async def notify_sell_success(self, pos: Position, result: Dict, reason: str, 
                                    total_portfolio_profit: float):
@@ -414,8 +495,6 @@ class TelegramNotifier:
         )
         await self.send(msg)
 
-    # ============ MONITORING ============
-
     async def notify_price_update(self, current_price: float, open_positions: List[Dict], 
                                    total_realized: float):
         if not open_positions:
@@ -440,7 +519,7 @@ class TelegramNotifier:
 
         await self.send("\n".join(lines))
 
-    async def notify_startup(self):
+    async def notify_startup(self, proxy_info: str = ""):
         msg = (
             "🚀 <b>Bot Started!</b>\n\n"
             "<b>Settings:</b>\n"
@@ -448,13 +527,15 @@ class TelegramNotifier:
             "• Profit Targets: %s\n"
             "• Cooldown: %d min\n"
             "• Check Interval: %d sec\n\n"
+            "%s"
             "<b>Policy: NEVER sell at loss</b>\n"
             "<b>Notifications enabled for all operations</b>"
         ) % (
             self.config.min_profit_usdt, self.config.min_profit_pct,
             ", ".join("%.1f%%" % t for t in self.config.profit_targets),
             self.config.cooldown_seconds // 60,
-            self.config.check_interval
+            self.config.check_interval,
+            ("<b>Proxy:</b> %s\n\n" % proxy_info) if proxy_info else ""
         )
         await self.send(msg)
 
@@ -484,6 +565,11 @@ class TelegramNotifier:
             stats["total_realized_profit"],
             datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
         )
+        await self.send(msg)
+
+    async def notify_proxy_status(self, proxy: str, status: str):
+        emoji = "✅" if "working" in status.lower() else "⚠️"
+        msg = "%s <b>Proxy Status:</b> %s\n<code>%s</code>" % (emoji, status, proxy or "Direct")
         await self.send(msg)
 
 
@@ -600,6 +686,7 @@ class PriceEngine:
 class TradingBot:
     def __init__(self):
         self.config = Config()
+        self.proxy_manager = ProxyManager()
         self.positions = PositionManager(self.config)
         self.retry = RetryManager(self.config)
         self.notifier = TelegramNotifier(self.config)
@@ -612,14 +699,41 @@ class TradingBot:
         self._cycle_count = 0
 
     async def initialize(self):
-        self.exchange = ccxt_pro.binance({
+        """تهيئة مع دعم البروكسي"""
+        # البحث عن بروكسي يعمل
+        proxy_url = self.proxy_manager.find_working_proxy(max_test=20)
+        proxy_dict = self.proxy_manager.get_proxy_dict()
+
+        # إعدادات الاتصال
+        exchange_config = {
             "apiKey": self.config.api_key,
             "secret": self.config.secret,
             "enableRateLimit": True,
             "options": {"defaultType": "spot"},
             "sandbox": True,
-        })
-        await self.exchange.load_markets()
+            "timeout": 30000,
+        }
+
+        if proxy_dict:
+            exchange_config["proxies"] = proxy_dict
+            logging.info("Using proxy: %s" % proxy_url)
+        else:
+            logging.warning("No proxy available, using direct connection")
+
+        self.exchange = ccxt_pro.binance(exchange_config)
+
+        try:
+            await self.exchange.load_markets()
+            logging.info("Markets loaded successfully")
+        except Exception as e:
+            logging.error("Failed to load markets: %s" % str(e))
+            # محاولة بدون بروكسي
+            if proxy_dict:
+                logging.info("Retrying without proxy...")
+                exchange_config.pop("proxies", None)
+                self.exchange = ccxt_pro.binance(exchange_config)
+                await self.exchange.load_markets()
+
         self.price_engine = PriceEngine(self.exchange, self.config)
 
         ws_task = asyncio.create_task(self.price_engine.start_websocket())
@@ -633,7 +747,17 @@ class TradingBot:
                 self.retry.record_success()
                 return result
             except Exception as e:
-                delay = self.retry.record_failure(str(e))
+                error_str = str(e)
+                # إذا كان الخطأ بسبب البروكسي، جرب بروكسي جديد
+                if "proxy" in error_str.lower() or "connection" in error_str.lower():
+                    logging.warning("Proxy issue detected, finding new proxy...")
+                    self.proxy_manager.working_proxy = None
+                    new_proxy = self.proxy_manager.find_working_proxy(max_test=10)
+                    if new_proxy:
+                        # تحديث البروكسي في الـ exchange
+                        self.exchange.proxies = self.proxy_manager.get_proxy_dict()
+
+                delay = self.retry.record_failure(error_str)
                 if attempt < self.config.max_retries - 1:
                     await asyncio.sleep(delay)
                 else:
@@ -766,7 +890,9 @@ class TradingBot:
 
         async with self.notifier:
             await self.initialize()
-            await self.notifier.notify_startup()
+
+            proxy_info = self.proxy_manager.working_proxy or "Direct connection"
+            await self.notifier.notify_startup(proxy_info)
 
             while self.running:
                 start = time.time()
@@ -801,7 +927,7 @@ if __name__ == "__main__":
         level=logging.INFO,
         format="%(asctime)s | %(levelname)s | %(message)s",
         handlers=[
-            logging.FileHandler("bot_fixed.log"),
+            logging.FileHandler("bot_with_proxy.log"),
             logging.StreamHandler()
         ]
     )
@@ -822,4 +948,3 @@ if __name__ == "__main__":
     except Exception as e:
         logging.critical("Fatal: %s" % str(e))
         raise
-
