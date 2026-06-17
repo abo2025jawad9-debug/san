@@ -35,12 +35,12 @@ class Config:
     min_profit_pct: float = 0.5
     profit_targets: List[float] = None
 
-    cooldown_seconds: int = 6000
+    cooldown_seconds: int = 600
 
     max_retries: int = 5
     base_retry_delay: float = 1.0
     max_retry_delay: float = 60.0
-    check_interval: int = 3
+    check_interval: int = 30
 
     proxy_refresh_interval: int = 600
     proxy_max_count: int = 150
