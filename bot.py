@@ -1,8 +1,3 @@
-"""
-Trading Bot - Telegram Debug Version
-With clear diagnostics and forced notifications
-"""
-
 import asyncio
 import aiohttp
 import json
@@ -415,7 +410,7 @@ class TelegramNotifier:
             time_until,
             datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
         )
-        await self.send(msg)
+        await self.force_send(msg)
 
     async def notify_balance(self, balance_info: Dict):
         """إشعار برصيد المحفظة"""
@@ -441,7 +436,7 @@ class TelegramNotifier:
             balance_info["closed_count"],
             datetime.now(timezone.utc).strftime("%H:%M:%S")
         )
-        await self.send(msg)
+        await self.force_send(msg)
 
     async def notify_test(self):
         """إشعار اختبار - يُرسل فوراً"""
@@ -873,19 +868,22 @@ class TradingBot:
     def get_next_schedule_time(self) -> Optional[str]:
         """الحصول على أقرب وقت للشراء من الجدول"""
         now = datetime.now(timezone.utc)
-        now_str = now.strftime("%Y-%m-%d %H:%M")
 
         future_signals = []
         for signal in self.config.schedule:
-            signal_time = signal["time"]
-            # Check if signal is in the future and not processed
-            if signal_time > now_str and signal_time not in self.processed_signals:
-                if signal["type"] in ["نزول", "صعود ونزول"]:
-                    future_signals.append(signal_time)
+            signal_time_str = signal["time"]
+            try:
+                signal_dt = datetime.strptime(signal_time_str, "%Y-%m-%d %H:%M").replace(tzinfo=timezone.utc)
+                # Check if signal is in the future and not processed
+                if signal_dt > now and signal_time_str not in self.processed_signals:
+                    if signal["type"] in ["نزول", "صعود ونزول"]:
+                        future_signals.append((signal_dt, signal_time_str))
+            except ValueError:
+                continue
 
         if future_signals:
-            future_signals.sort()
-            return future_signals[0]
+            future_signals.sort(key=lambda x: x[0])
+            return future_signals[0][1]
         return None
 
     def load_state(self) -> bool:
@@ -1129,9 +1127,17 @@ class TradingBot:
                 now_dt = datetime.now(timezone.utc)
                 next_dt = datetime.strptime(next_time, "%Y-%m-%d %H:%M").replace(tzinfo=timezone.utc)
                 diff = next_dt - now_dt
-                hours = diff.seconds // 3600
-                minutes = (diff.seconds % 3600) // 60
-                time_until = "%d ساعة و %d دقيقة" % (hours, minutes) if hours > 0 else "%d دقيقة" % minutes
+                total_seconds = int(diff.total_seconds())
+                hours = total_seconds // 3600
+                minutes = (total_seconds % 3600) // 60
+                if hours > 0 and minutes > 0:
+                    time_until = "%d ساعة و %d دقيقة" % (hours, minutes)
+                elif hours > 0:
+                    time_until = "%d ساعة" % hours
+                elif minutes > 0:
+                    time_until = "%d دقيقة" % minutes
+                else:
+                    time_until = "أقل من دقيقة"
                 await self.notifier.notify_next_schedule(next_time, time_until)
 
         # حفظ الحالة كل 10 دورات
@@ -1164,9 +1170,17 @@ class TradingBot:
                 now_dt = datetime.now(timezone.utc)
                 next_dt = datetime.strptime(next_time, "%Y-%m-%d %H:%M").replace(tzinfo=timezone.utc)
                 diff = next_dt - now_dt
-                hours = diff.seconds // 3600
-                minutes = (diff.seconds % 3600) // 60
-                time_until = "%d ساعة و %d دقيقة" % (hours, minutes) if hours > 0 else "%d دقيقة" % minutes
+                total_seconds = int(diff.total_seconds())
+                hours = total_seconds // 3600
+                minutes = (total_seconds % 3600) // 60
+                if hours > 0 and minutes > 0:
+                    time_until = "%d ساعة و %d دقيقة" % (hours, minutes)
+                elif hours > 0:
+                    time_until = "%d ساعة" % hours
+                elif minutes > 0:
+                    time_until = "%d دقيقة" % minutes
+                else:
+                    time_until = "أقل من دقيقة"
                 await self.notifier.notify_next_schedule(next_time, time_until)
 
             # Send test message
