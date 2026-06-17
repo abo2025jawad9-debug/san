@@ -1,271 +1,22 @@
 """
-Crypto Trading Bot - Advanced Proxy System
-Fetches 150+ proxies, tests all, picks the fastest
+Trading Bot - Telegram Debug Version
+With clear diagnostics and forced notifications
 """
 
 import asyncio
 import aiohttp
-import aiohttp.client_exceptions
 import json
 import os
 import time
 import logging
-import concurrent.futures
-from datetime import datetime, timezone, timedelta
-from dataclasses import dataclass, field
-from typing import List, Dict, Optional, Callable, Any, Tuple
+import sys
+from datetime import datetime, timezone
+from dataclasses import dataclass
+from typing import List, Dict, Optional, Callable, Any
 from collections import deque
 import uuid
 import requests
-import socket
-import ssl
-
-# ==========================================
-# ADVANCED PROXY MANAGER - 150+ PROXIES
-# ==========================================
-
-@dataclass
-class ProxyResult:
-    """نتيجة اختبار بروكسي"""
-    url: str
-    alive: bool = False
-    response_time: float = float('inf')
-    location: str = "Unknown"
-    error: str = ""
-    score: float = 0.0  # كلما زاد = أفضل
-
-class AdvancedProxyManager:
-    """
-    مدير بروكسي متقدم:
-    1. يجلب 150+ بروكسي من مصادر متعددة
-    2. يختبر كل بروكسي (السرعة + الاتصال)
-    3. يختار الأفضل تلقائياً
-    4. يعيد الاختبار دورياً
-    """
-
-    PROXY_SOURCES = [
-        # المصدر 1: ProxyScrape
-        "https://api.proxyscrape.com/v2/?request=displayproxies&protocol=http&timeout=10000&country=all&ssl=all&anonymity=all",
-        # المصدر 2: TheSpeedX
-        "https://raw.githubusercontent.com/TheSpeedX/PROXY-List/master/http.txt",
-        # المصدر 3: clarketm
-        "https://raw.githubusercontent.com/clarketm/proxy-list/master/proxy-list-raw.txt",
-        # المصدر 4: proxy-list.download
-        "https://www.proxy-list.download/api/v1/get?type=http",
-        # المصدر 5: free-proxy-list
-        "https://raw.githubusercontent.com/jetkai/proxy-list/main/online-proxies/txt/proxies-http.txt",
-        # المصدر 6: additional
-        "https://raw.githubusercontent.com/mmpx12/proxy-list/master/http.txt",
-        # المصدر 7: more proxies
-        "https://raw.githubusercontent.com/roosterkid/openproxylist/main/HTTPS_RAW.txt",
-        # المصدر 8: ssl proxies
-        "https://www.sslproxies.org/",
-    ]
-
-    TEST_URLS = [
-        "https://testnet.binance.vision/api/v3/ping",
-        "https://api.binance.com/api/v3/ping",
-        "https://api.coingecko.com/api/v3/ping",
-    ]
-
-    def __init__(self, max_proxies: int = 150):
-        self.max_proxies = max_proxies
-        self.proxy_list: List[str] = []
-        self.working_proxies: List[ProxyResult] = []
-        self.best_proxy: Optional[str] = None
-        self.best_result: Optional[ProxyResult] = None
-        self.last_refresh = 0
-        self._lock = asyncio.Lock()
-
-    def fetch_proxies_sync(self) -> List[str]:
-        """جلب البروكسيات بشكل متزامن (للتشغيل في thread منفصل)"""
-        all_proxies = []
-
-        for source in self.PROXY_SOURCES:
-            try:
-                resp = requests.get(source, timeout=15, headers={
-                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-                })
-                if resp.status_code == 200:
-                    text = resp.text
-                    # استخراج IP:Port من النص
-                    import re
-                    # نمط IP:Port
-                    pattern = r'\b(?:[0-9]{1,3}\.){3}[0-9]{1,3}:[0-9]{2,5}\b'
-                    matches = re.findall(pattern, text)
-
-                    for match in matches:
-                        proxy_url = "http://%s" % match
-                        if proxy_url not in all_proxies:
-                            all_proxies.append(proxy_url)
-
-                    logging.info("Source %s: fetched %d proxies" % (source[:50], len(matches)))
-            except Exception as e:
-                logging.warning("Failed source %s: %s" % (source[:50], str(e)))
-
-        # إزالة التكرار والحد من العدد
-        unique_proxies = list(dict.fromkeys(all_proxies))  # يحافظ على الترتيب
-        limited = unique_proxies[:self.max_proxies]
-
-        logging.info("Total unique proxies fetched: %d (limited to %d)" % (len(unique_proxies), len(limited)))
-        return limited
-
-    async def test_single_proxy(self, proxy_url: str, session: aiohttp.ClientSession) -> ProxyResult:
-        """اختبار بروكسي واحد"""
-        result = ProxyResult(url=proxy_url)
-        start_time = time.time()
-
-        try:
-            # اختبار Binance Testnet
-            test_url = "https://testnet.binance.vision/api/v3/time"
-            timeout = aiohttp.ClientTimeout(total=8)
-
-            async with session.get(
-                test_url, 
-                proxy=proxy_url,
-                timeout=timeout,
-                ssl=False  # بعض البروكسيات لا تدعم SSL الكامل
-            ) as resp:
-                elapsed = time.time() - start_time
-
-                if resp.status == 200:
-                    data = await resp.text()
-                    if 'serverTime' in data or len(data) > 0:
-                        result.alive = True
-                        result.response_time = elapsed
-                        # حساب الدرجة: كلما زادت = أفضل
-                        # السرعة أهم عامل
-                        result.score = 1000 / (elapsed + 0.1)
-                        logging.debug("Proxy %s: %.2fs (score: %.1f)" % (proxy_url, elapsed, result.score))
-                else:
-                    result.error = "HTTP %d" % resp.status
-
-        except asyncio.TimeoutError:
-            result.error = "Timeout"
-        except aiohttp.client_exceptions.ClientProxyConnectionError:
-            result.error = "Proxy connection failed"
-        except aiohttp.client_exceptions.ClientHttpProxyError:
-            result.error = "Proxy HTTP error"
-        except ssl.SSLError:
-            result.error = "SSL error"
-        except Exception as e:
-            result.error = str(e)[:50]
-
-        return result
-
-    async def test_all_proxies(self, proxy_list: List[str]) -> List[ProxyResult]:
-        """اختبار كل البروكسيات بشكل متوازي"""
-        logging.info("Testing %d proxies..." % len(proxy_list))
-
-        # إنشاء session واحد لكل الاختبارات
-        connector = aiohttp.TCPConnector(limit=100, limit_per_host=10, ssl=False)
-        async with aiohttp.ClientSession(connector=connector) as session:
-            # إنشاء جميع المهام
-            tasks = [self.test_single_proxy(proxy, session) for proxy in proxy_list]
-
-            # تنفيذ بشكل متوازي مع حد للعدد المتزامن
-            semaphore = asyncio.Semaphore(50)  # 50 اختبار متزامن كحد أقصى
-
-            async def bounded_test(task):
-                async with semaphore:
-                    return await task
-
-            bounded_tasks = [bounded_test(t) for t in tasks]
-            results = await asyncio.gather(*bounded_tasks, return_exceptions=True)
-
-        # معالجة النتائج
-        valid_results = []
-        for i, result in enumerate(results):
-            if isinstance(result, Exception):
-                logging.debug("Proxy %s: Exception - %s" % (proxy_list[i], str(result)))
-            elif isinstance(result, ProxyResult):
-                valid_results.append(result)
-
-        # تصفية العاملة وترتيبها
-        working = [r for r in valid_results if r.alive]
-        working.sort(key=lambda x: x.score, reverse=True)  # الأعلى درجة أولاً
-
-        logging.info("Working proxies: %d/%d" % (len(working), len(proxy_list)))
-        if working:
-            logging.info("Best proxy: %s (%.2fs)" % (working[0].url, working[0].response_time))
-
-        return working
-
-    async def refresh_proxies(self) -> Optional[str]:
-        """تحديث قائمة البروكسيات واختيار الأفضل"""
-        async with self._lock:
-            logging.info("=" * 60)
-            logging.info("REFRESHING PROXY LIST")
-            logging.info("=" * 60)
-
-            # 1. جلب البروكسيات (في thread منفصل لأن requests متزامن)
-            loop = asyncio.get_event_loop()
-            with concurrent.futures.ThreadPoolExecutor() as pool:
-                proxy_list = await loop.run_in_executor(pool, self.fetch_proxies_sync)
-
-            if not proxy_list:
-                logging.error("No proxies fetched!")
-                return None
-
-            # 2. اختبار كل البروكسيات
-            self.working_proxies = await self.test_all_proxies(proxy_list)
-
-            # 3. اختيار الأفضل
-            if self.working_proxies:
-                self.best_result = self.working_proxies[0]
-                self.best_proxy = self.best_result.url
-                self.last_refresh = time.time()
-
-                logging.info("=" * 60)
-                logging.info("BEST PROXY: %s" % self.best_proxy)
-                logging.info("Response time: %.2fs | Score: %.1f" % (self.best_result.response_time, self.best_result.score))
-                logging.info("=" * 60)
-
-                return self.best_proxy
-            else:
-                logging.error("No working proxies found!")
-                self.best_proxy = None
-                self.best_result = None
-                return None
-
-    def get_proxy_dict(self) -> Optional[Dict[str, str]]:
-        """الحصول على قاموس البروكسي"""
-        if self.best_proxy:
-            return {
-                "http": self.best_proxy,
-                "https": self.best_proxy
-            }
-        return None
-
-    async def get_next_proxy(self) -> Optional[str]:
-        """الحصول على البروكسي التالي في القائمة (للتدوير)"""
-        async with self._lock:
-            if not self.working_proxies:
-                return None
-
-            # إزالة البروكسي الحالي من المقدمة وإعادة إضافته للنهاية
-            if len(self.working_proxies) > 1:
-                current = self.working_proxies.pop(0)
-                self.working_proxies.append(current)
-                self.best_proxy = self.working_proxies[0].url
-                self.best_result = self.working_proxies[0]
-                return self.best_proxy
-
-            return self.best_proxy
-
-    async def mark_proxy_failed(self, proxy_url: str):
-        """وضع علامة فشل على بروكسي"""
-        async with self._lock:
-            self.working_proxies = [p for p in self.working_proxies if p.url != proxy_url]
-            if self.working_proxies:
-                self.best_proxy = self.working_proxies[0].url
-                self.best_result = self.working_proxies[0]
-            else:
-                self.best_proxy = None
-                self.best_result = None
-
-            logging.warning("Proxy %s marked as failed. Remaining: %d" % (proxy_url, len(self.working_proxies)))
-
+import re
 
 # ==========================================
 # CONFIGURATION
@@ -295,8 +46,7 @@ class Config:
     max_retry_delay: float = 60.0
     check_interval: int = 3
 
-    # Proxy settings
-    proxy_refresh_interval: int = 600  # تحديث البروكسي كل 10 دقائق
+    proxy_refresh_interval: int = 600
     proxy_max_count: int = 150
 
     schedule: List[Dict] = None
@@ -344,7 +94,407 @@ class Config:
 
 
 # ==========================================
-# INDEPENDENT POSITION
+# TELEGRAM NOTIFIER - ENHANCED WITH DEBUG
+# ==========================================
+
+class TelegramNotifier:
+    """نظام إشعارات تليجرام مع تشخيصات كاملة"""
+
+    def __init__(self, config: Config):
+        self.config = config
+        self.session: Optional[aiohttp.ClientSession] = None
+        self.message_queue: asyncio.Queue = asyncio.Queue()
+        self._sender_task: Optional[asyncio.Task] = None
+        self._connected: bool = False
+        self._messages_sent: int = 0
+        self._messages_failed: int = 0
+
+    async def __aenter__(self):
+        """تهيئة الجلسة مع تشخيص"""
+        logging.info("=" * 60)
+        logging.info("TELEGRAM NOTIFIER INITIALIZATION")
+        logging.info("=" * 60)
+
+        # فحص الإعدادات
+        if not self.config.telegram_token:
+            logging.error("❌ TELEGRAM_TOKEN is EMPTY!")
+            logging.error("   Please set TELEGRAM_TOKEN in GitHub Secrets")
+            self._connected = False
+            return self
+
+        if not self.config.telegram_chat_id:
+            logging.error("❌ TELEGRAM_CHAT_ID is EMPTY!")
+            logging.error("   Please set TELEGRAM_CHAT_ID in GitHub Secrets")
+            self._connected = False
+            return self
+
+        logging.info("✅ TELEGRAM_TOKEN: %s...%s (length: %d)" % (
+            self.config.telegram_token[:8],
+            self.config.telegram_token[-4:],
+            len(self.config.telegram_token)
+        ))
+        logging.info("✅ TELEGRAM_CHAT_ID: %s" % self.config.telegram_chat_id)
+
+        try:
+            self.session = aiohttp.ClientSession()
+
+            # اختبار الاتصال فوراً
+            test_result = await self._test_connection()
+            if test_result:
+                logging.info("✅ Telegram connection TEST PASSED")
+                self._connected = True
+            else:
+                logging.error("❌ Telegram connection TEST FAILED")
+                self._connected = False
+
+            # تشغيل مرسل الخلفية
+            self._sender_task = asyncio.create_task(self._queue_sender())
+
+        except Exception as e:
+            logging.error("❌ Failed to initialize Telegram: %s" % str(e))
+            self._connected = False
+
+        return self
+
+    async def __aexit__(self, *args):
+        if self._sender_task:
+            self._sender_task.cancel()
+            try:
+                await self._sender_task
+            except asyncio.CancelledError:
+                pass
+        if self.session:
+            await self.session.close()
+
+    async def _test_connection(self) -> bool:
+        """اختبار الاتصال بـ Telegram API"""
+        try:
+            url = "https://api.telegram.org/bot%s/getMe" % self.config.telegram_token
+            async with self.session.get(url, timeout=10) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    if data.get("ok"):
+                        bot_info = data.get("result", {})
+                        logging.info("✅ Bot connected: @%s (ID: %s)" % (
+                            bot_info.get("username", "unknown"),
+                            bot_info.get("id", "unknown")
+                        ))
+                        return True
+                    else:
+                        logging.error("❌ Telegram API error: %s" % data.get("description", "Unknown"))
+                        return False
+                else:
+                    logging.error("❌ HTTP %d: %s" % (resp.status, await resp.text()))
+                    return False
+        except Exception as e:
+            logging.error("❌ Connection test failed: %s" % str(e))
+            return False
+
+    async def _queue_sender(self):
+        """مرسل الإشعارات في الخلفية"""
+        logging.info("📡 Queue sender started")
+
+        while True:
+            try:
+                message = await self.message_queue.get()
+
+                if not self._connected:
+                    logging.warning("⚠️ Telegram not connected, message dropped")
+                    self._messages_failed += 1
+                    continue
+
+                success = await self._send_raw(message)
+                if success:
+                    self._messages_sent += 1
+                else:
+                    self._messages_failed += 1
+
+                await asyncio.sleep(0.1)  # Rate limit protection
+
+            except asyncio.CancelledError:
+                logging.info("📡 Queue sender stopped")
+                break
+            except Exception as e:
+                logging.error("Queue sender error: %s" % str(e))
+                self._messages_failed += 1
+
+    async def _send_raw(self, message: str) -> bool:
+        """إرسال رسالة خام - مع تسجيل كامل"""
+        if not self.session:
+            logging.error("❌ No session available")
+            return False
+
+        try:
+            url = "https://api.telegram.org/bot%s/sendMessage" % self.config.telegram_token
+            payload = {
+                "chat_id": self.config.telegram_chat_id,
+                "text": message,
+                "parse_mode": "HTML",
+                "disable_web_page_preview": True
+            }
+
+            logging.debug("Sending message to %s..." % self.config.telegram_chat_id)
+
+            async with self.session.post(url, json=payload, timeout=15) as resp:
+                response_text = await resp.text()
+
+                if resp.status == 200:
+                    data = json.loads(response_text)
+                    if data.get("ok"):
+                        logging.info("✅ Message sent successfully (total: %d)" % self._messages_sent)
+                        return True
+                    else:
+                        logging.error("❌ Telegram API error: %s" % data.get("description", "Unknown"))
+                        return False
+                else:
+                    logging.error("❌ HTTP %d: %s" % (resp.status, response_text[:200]))
+                    return False
+
+        except asyncio.TimeoutError:
+            logging.error("❌ Telegram send timeout")
+            return False
+        except Exception as e:
+            logging.error("❌ Telegram send failed: %s" % str(e))
+            return False
+
+    async def send(self, message: str):
+        """إضافة رسالة إلى الطابور"""
+        if not self._connected:
+            logging.warning("⚠️ Cannot send - Telegram not connected")
+            return
+
+        await self.message_queue.put(message)
+        logging.debug("📨 Message queued (queue size: %d)" % self.message_queue.qsize())
+
+    async def force_send(self, message: str) -> bool:
+        """إرسال فوري بدون طابور (للتشخيص)"""
+        if not self.session:
+            logging.error("❌ No session")
+            return False
+        return await self._send_raw(message)
+
+    # ============ NOTIFICATIONS ============
+
+    async def notify_startup(self, proxy_info: str = "", mode: str = "LIVE"):
+        """إشعار بدء التشغيل - مهم جداً"""
+        if not self._connected:
+            logging.error("❌ Cannot send startup notification - not connected")
+            return
+
+        msg = (
+            "🚀 <b>Bot Started! (%s MODE)</b>\n\n"
+            "<b>Settings:</b>\n"
+            "• Min Profit: $%.2f / %.1f%%\n"
+            "• Profit Targets: %s\n"
+            "• Cooldown: %d min\n"
+            "• Check Interval: %d sec\n"
+            "• Proxy: %s\n\n"
+            "<b>Policy: NEVER sell at loss</b>\n"
+            "<b>Time:</b> %s"
+        ) % (
+            mode,
+            self.config.min_profit_usdt, self.config.min_profit_pct,
+            ", ".join("%.1f%%" % t for t in self.config.profit_targets),
+            self.config.cooldown_seconds // 60,
+            self.config.check_interval,
+            proxy_info or "None",
+            datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+        )
+
+        # إرسال فوري بدون طابور للتأكد
+        success = await self.force_send(msg)
+        if success:
+            logging.info("✅ Startup notification sent")
+        else:
+            logging.error("❌ Failed to send startup notification")
+
+    async def notify_buy_success(self, pos_id: str, buy_price: float, amount: float, 
+                                  total_cost: float, reason: str):
+        if not self._connected:
+            return
+
+        msg = (
+            "🟢 <b>Buy Successful! #%s</b>\n\n"
+            "<b>Price:</b> <code>%.2f</code> USDT\n"
+            "<b>Amount:</b> <code>%.6f</code> BTC\n"
+            "<b>Total Cost:</b> <code>%.4f</code> USDT\n"
+            "<b>Reason:</b> %s\n"
+            "<b>Time:</b> %s"
+        ) % (
+            pos_id, buy_price, amount, total_cost, reason,
+            datetime.now(timezone.utc).strftime("%H:%M:%S")
+        )
+        await self.send(msg)
+
+    async def notify_sell_success(self, pos_id: str, buy_price: float, sell_price: float,
+                                   amount: float, net_profit: float, profit_pct: float,
+                                   reason: str, total_portfolio_profit: float):
+        if not self._connected:
+            return
+
+        emoji = "🚀🚀🚀" if profit_pct >= 5 else "🚀🚀" if profit_pct >= 3 else "🚀" if profit_pct >= 1 else "✅"
+
+        msg = (
+            "%s <b>Sell Successful! #%s</b>\n\n"
+            "<b>Buy:</b> <code>%.2f</code> | <b>Sell:</b> <code>%.2f</code>\n"
+            "<b>Amount:</b> <code>%.6f</code> BTC\n\n"
+            "<b>Net Profit: +$%.4f (%.2f%%)</b>\n"
+            "<b>Reason:</b> %s\n"
+            "<b>Portfolio Total:</b> <code>$%.4f</code>\n"
+            "<b>Time:</b> %s"
+        ) % (
+            emoji, pos_id, buy_price, sell_price, amount,
+            net_profit, profit_pct, reason, total_portfolio_profit,
+            datetime.now(timezone.utc).strftime("%H:%M:%S")
+        )
+        await self.send(msg)
+
+    async def notify_error(self, error: str, context: str = ""):
+        if not self._connected:
+            logging.error("Telegram error (%s): %s" % (context, error))
+            return
+
+        msg = (
+            "🚨 <b>Error!</b>\n\n"
+            "<b>Context:</b> %s\n"
+            "<b>Error:</b> <code>%s</code>\n"
+            "<b>Time:</b> %s"
+        ) % (
+            context or "Unknown", error,
+            datetime.now(timezone.utc).strftime("%H:%M:%S")
+        )
+        await self.send(msg)
+
+    async def notify_proxy_refresh(self, total: int, working: int, best: str, response_time: float):
+        if not self._connected:
+            return
+
+        msg = (
+            "🔄 <b>Proxy Refresh</b>\n\n"
+            "<b>Total:</b> %d | <b>Working:</b> %d\n"
+            "<b>Best:</b> <code>%s</code>\n"
+            "<b>Speed:</b> <code>%.2fs</code>\n"
+            "<b>Time:</b> %s"
+        ) % (
+            total, working, best, response_time,
+            datetime.now(timezone.utc).strftime("%H:%M:%S")
+        )
+        await self.send(msg)
+
+    async def notify_test(self):
+        """إشعار اختبار - يُرسل فوراً"""
+        msg = (
+            "✅ <b>Test Message</b>\n\n"
+            "<b>Bot is running!</b>\n"
+            "<b>Time:</b> %s\n\n"
+            "If you see this, Telegram is working correctly."
+        ) % datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+
+        return await self.force_send(msg)
+
+    def get_stats(self) -> Dict:
+        return {
+            "connected": self._connected,
+            "sent": self._messages_sent,
+            "failed": self._messages_failed,
+            "queue_size": self.message_queue.qsize()
+        }
+
+
+# ==========================================
+# PROXY MANAGER (Simplified)
+# ==========================================
+
+class ProxyManager:
+    def __init__(self, max_proxies: int = 150):
+        self.max_proxies = max_proxies
+        self.working_proxies: List[Dict] = []
+        self.best_proxy: Optional[str] = None
+        self.last_refresh = 0
+
+    def fetch_proxies_sync(self) -> List[str]:
+        sources = [
+            "https://api.proxyscrape.com/v2/?request=displayproxies&protocol=http&timeout=10000&country=all&ssl=all&anonymity=all",
+            "https://raw.githubusercontent.com/TheSpeedX/PROXY-List/master/http.txt",
+            "https://raw.githubusercontent.com/clarketm/proxy-list/master/proxy-list-raw.txt",
+        ]
+
+        all_proxies = []
+        for source in sources:
+            try:
+                resp = requests.get(source, timeout=15, headers={
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+                })
+                if resp.status_code == 200:
+                    pattern = r'\b(?:[0-9]{1,3}\.){3}[0-9]{1,3}:[0-9]{2,5}\b'
+                    matches = re.findall(pattern, resp.text)
+                    for match in matches:
+                        proxy = "http://%s" % match
+                        if proxy not in all_proxies:
+                            all_proxies.append(proxy)
+            except Exception as e:
+                logging.warning("Source failed: %s" % str(e))
+
+        return list(dict.fromkeys(all_proxies))[:self.max_proxies]
+
+    async def test_proxy(self, proxy: str) -> tuple[bool, float]:
+        try:
+            start = time.time()
+            async with aiohttp.ClientSession() as session:
+                async with session.get(
+                    "https://testnet.binance.vision/api/v3/time",
+                    proxy=proxy,
+                    timeout=aiohttp.ClientTimeout(total=8),
+                    ssl=False
+                ) as resp:
+                    elapsed = time.time() - start
+                    if resp.status == 200:
+                        return True, elapsed
+        except:
+            pass
+        return False, float('inf')
+
+    async def refresh_proxies(self) -> Optional[str]:
+        logging.info("Fetching proxies...")
+        proxy_list = self.fetch_proxies_sync()
+        logging.info("Fetched %d proxies" % len(proxy_list))
+
+        if not proxy_list:
+            return None
+
+        # Test in batches
+        working = []
+        for i in range(0, len(proxy_list), 50):
+            batch = proxy_list[i:i+50]
+            tasks = [self.test_proxy(p) for p in batch]
+            results = await asyncio.gather(*tasks)
+
+            for proxy, (alive, response_time) in zip(batch, results):
+                if alive:
+                    working.append({"url": proxy, "time": response_time})
+
+            logging.info("Tested %d/%d, working so far: %d" % (
+                min(i+50, len(proxy_list)), len(proxy_list), len(working)
+            ))
+
+        if working:
+            working.sort(key=lambda x: x["time"])
+            self.working_proxies = working
+            self.best_proxy = working[0]["url"]
+            self.last_refresh = time.time()
+            logging.info("Best proxy: %s (%.2fs)" % (self.best_proxy, working[0]["time"]))
+            return self.best_proxy
+
+        return None
+
+    def get_proxy_dict(self) -> Optional[Dict]:
+        if self.best_proxy:
+            return {"http": self.best_proxy, "https": self.best_proxy}
+        return None
+
+
+# ==========================================
+# POSITION
 # ==========================================
 
 class Position:
@@ -383,25 +533,19 @@ class Position:
         net_profit = self.calculate_net_profit(current_price)
         return (net_profit / self.total_cost) * 100 if self.total_cost > 0 else 0
 
-    def update_highest_price(self, current_price: float):
-        if current_price > self.highest_price:
-            self.highest_price = current_price
-            return True
-        return False
-
     def should_sell(self, current_price: float, min_profit_usdt: float, 
                      min_profit_pct: float, profit_targets: List[float]) -> tuple[bool, str]:
         net_profit = self.calculate_net_profit(current_price)
         profit_pct = self.calculate_profit_pct(current_price)
 
         if net_profit <= 0:
-            return False, "Waiting for profit (currently: $%.4f)" % net_profit
+            return False, "Waiting for profit ($%.4f)" % net_profit
 
         if net_profit < min_profit_usdt:
-            return False, "Small profit ($%.4f < $%.2f)" % (net_profit, min_profit_usdt)
+            return False, "Small profit ($%.4f)" % net_profit
 
         if profit_pct < min_profit_pct:
-            return False, "Small %% (%.2f%% < %.2f%%)" % (profit_pct, min_profit_pct)
+            return False, "Small %% (%.2f%%)" % profit_pct
 
         for target in sorted(profit_targets, reverse=True):
             if profit_pct >= target:
@@ -423,9 +567,6 @@ class Position:
             "buy_price": self.buy_price,
             "sell_price": sell_price,
             "amount": self.amount,
-            "total_cost": self.total_cost,
-            "gross_return": self.gross_return,
-            "sell_fee": self.sell_fee,
             "net_profit": self.net_profit,
             "profit_pct": self.profit_pct,
             "hold_hours": (self.sell_time - self.buy_time).total_seconds() / 3600
@@ -443,22 +584,17 @@ class PositionManager:
         self.open_positions: List[str] = []
         self.closed_positions: List[str] = []
         self.total_realized_profit: float = 0.0
-        self._lock = asyncio.Lock()
 
     async def create_position(self, buy_price: float, amount: float, 
                              buy_fee: float, total_cost: float, reason: str) -> Position:
         pos = Position(buy_price, amount, buy_fee, total_cost, reason, self.config.fee_rate)
-        async with self._lock:
-            self.positions[pos.id] = pos
-            self.open_positions.append(pos.id)
+        self.positions[pos.id] = pos
+        self.open_positions.append(pos.id)
         return pos
 
     async def check_all_positions(self, current_price: float) -> List[tuple]:
-        ready_to_sell = []
-        async with self._lock:
-            open_ids = self.open_positions.copy()
-
-        for pos_id in open_ids:
+        ready = []
+        for pos_id in self.open_positions[:]:
             pos = self.positions.get(pos_id)
             if not pos or not pos.is_open:
                 continue
@@ -470,8 +606,8 @@ class PositionManager:
                 self.config.profit_targets
             )
             if should_sell:
-                ready_to_sell.append((pos, reason))
-        return ready_to_sell
+                ready.append((pos, reason))
+        return ready
 
     async def close_position(self, pos_id: str, sell_price: float, reason: str) -> Optional[Dict]:
         pos = self.positions.get(pos_id)
@@ -480,13 +616,9 @@ class PositionManager:
 
         result = pos.execute_sell(sell_price)
         pos.sell_reason = reason
-
-        async with self._lock:
-            if pos_id in self.open_positions:
-                self.open_positions.remove(pos_id)
-            self.closed_positions.append(pos_id)
-            self.total_realized_profit += pos.net_profit
-
+        self.open_positions.remove(pos_id)
+        self.closed_positions.append(pos_id)
+        self.total_realized_profit += pos.net_profit
         return result
 
     def get_open_count(self) -> int:
@@ -496,319 +628,26 @@ class PositionManager:
         return {
             "open_count": len(self.open_positions),
             "closed_count": len(self.closed_positions),
-            "total_realized_profit": self.total_realized_profit,
-            "total_positions": len(self.positions)
+            "total_realized_profit": self.total_realized_profit
         }
 
-    def get_open_positions_details(self, current_price: float) -> List[Dict]:
-        details = []
-        for pos_id in self.open_positions:
-            pos = self.positions.get(pos_id)
-            if pos:
-                net_pnl = pos.calculate_net_profit(current_price)
-                pct = pos.calculate_profit_pct(current_price)
-                details.append({
-                    "id": pos.id,
-                    "buy_price": pos.buy_price,
-                    "current_pnl": net_pnl,
-                    "current_pct": pct,
-                    "highest": pos.highest_price,
-                    "age_hours": (datetime.now(timezone.utc) - pos.buy_time).total_seconds() / 3600
-                })
-        return details
-
 
 # ==========================================
-# TELEGRAM NOTIFIER
-# ==========================================
-
-class TelegramNotifier:
-    def __init__(self, config: Config):
-        self.config = config
-        self.session: Optional[aiohttp.ClientSession] = None
-        self.message_queue: asyncio.Queue = asyncio.Queue()
-        self._sender_task: Optional[asyncio.Task] = None
-
-    async def __aenter__(self):
-        self.session = aiohttp.ClientSession()
-        self._sender_task = asyncio.create_task(self._queue_sender())
-        return self
-
-    async def __aexit__(self, *args):
-        if self._sender_task:
-            self._sender_task.cancel()
-            try:
-                await self._sender_task
-            except asyncio.CancelledError:
-                pass
-        if self.session:
-            await self.session.close()
-
-    async def _queue_sender(self):
-        while True:
-            try:
-                message = await self.message_queue.get()
-                await self._send_raw(message)
-                await asyncio.sleep(0.1)
-            except asyncio.CancelledError:
-                break
-            except Exception as e:
-                logging.error("Queue sender error: %s" % str(e))
-
-    async def _send_raw(self, message: str):
-        if not self.config.telegram_token or not self.config.telegram_chat_id:
-            return
-        try:
-            url = "https://api.telegram.org/bot%s/sendMessage" % self.config.telegram_token
-            payload = {
-                "chat_id": self.config.telegram_chat_id,
-                "text": message,
-                "parse_mode": "HTML",
-                "disable_web_page_preview": True
-            }
-            async with self.session.post(url, json=payload, timeout=10) as resp:
-                if resp.status != 200:
-                    text = await resp.text()
-                    logging.warning("Telegram API error %d: %s" % (resp.status, text))
-        except Exception as e:
-            logging.warning("Telegram send failed: %s" % str(e))
-
-    async def send(self, message: str):
-        await self.message_queue.put(message)
-
-    async def notify_buy_success(self, pos: Position, order_info: Dict = None):
-        msg = (
-            "🟢 <b>Buy Successful!</b>\n\n"
-            "<b>ID:</b> <code>#%s</code>\n"
-            "<b>Buy Price:</b> <code>%.2f</code> USDT\n"
-            "<b>Amount:</b> <code>%.6f</code> BTC\n"
-            "<b>Total Cost:</b> <code>%.4f</code> USDT\n\n"
-            "<b>Reason:</b> %s\n"
-            "<b>Time:</b> %s\n\n"
-            "<b>Policy:</b> Sell ONLY at profit"
-        ) % (
-            pos.id, pos.buy_price, pos.amount, pos.total_cost,
-            pos.reason, pos.buy_time.strftime("%Y-%m-%d %H:%M:%S")
-        )
-        await self.send(msg)
-
-    async def notify_buy_failed(self, error: str, attempted_price: float = 0, attempted_amount: float = 0):
-        msg = (
-            "🔴 <b>Buy Failed!</b>\n\n"
-            "<b>Error:</b> <code>%s</code>\n"
-            "<b>Target Price:</b> <code>%.2f</code> USDT\n"
-            "<b>Target Amount:</b> <code>%.6f</code> BTC\n\n"
-            "<b>Time:</b> %s\n\n"
-            "Retrying automatically..."
-        ) % (
-            error, attempted_price, attempted_amount,
-            datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
-        )
-        await self.send(msg)
-
-    async def notify_sell_success(self, pos: Position, result: Dict, reason: str, 
-                                   total_portfolio_profit: float):
-        if pos.profit_pct >= 5:
-            emoji = "🚀🚀🚀"
-        elif pos.profit_pct >= 3:
-            emoji = "🚀🚀"
-        elif pos.profit_pct >= 1:
-            emoji = "🚀"
-        else:
-            emoji = "✅"
-
-        bar_length = min(int(pos.profit_pct), 20)
-        profit_bar = "█" * bar_length + "░" * (20 - bar_length)
-
-        msg = (
-            "%s <b>Sell Successful! #%s</b>\n\n"
-            "<b>Buy Price:</b> <code>%.2f</code> USDT\n"
-            "<b>Sell Price:</b> <code>%.2f</code> USDT\n"
-            "<b>Amount:</b> <code>%.6f</code> BTC\n\n"
-            "<b>Profit Details:</b>\n"
-            "├ <b>Gross:</b> <code>%.4f</code> USDT\n"
-            "├ <b>Sell Fee:</b> <code>%.4f</code> USDT\n"
-            "├ <b>Buy Cost:</b> <code>%.4f</code> USDT\n"
-            "└ <b>Net Profit:</b> <code>+$%.4f</code> USDT\n\n"
-            "<b>Profit: %.2f%%</b>\n"
-            "%s\n\n"
-            "<b>Reason:</b> %s\n"
-            "<b>Hold Time:</b> %.1f hours\n"
-            "<b>Time:</b> %s\n\n"
-            "<b>Total Portfolio Profit:</b> <code>$%.4f</code> USDT"
-        ) % (
-            emoji, pos.id,
-            pos.buy_price, pos.sell_price, pos.amount,
-            pos.gross_return, pos.sell_fee, pos.total_cost, pos.net_profit,
-            pos.profit_pct, profit_bar,
-            reason, result["hold_hours"],
-            pos.sell_time.strftime("%Y-%m-%d %H:%M:%S"),
-            total_portfolio_profit
-        )
-        await self.send(msg)
-
-    async def notify_sell_failed(self, pos_id: str, error: str, current_price: float):
-        msg = (
-            "🔴 <b>Sell Failed! #%s</b>\n\n"
-            "<b>Error:</b> <code>%s</code>\n"
-            "<b>Current Price:</b> <code>%.2f</code> USDT\n\n"
-            "<b>Time:</b> %s\n\n"
-            "Retrying automatically..."
-        ) % (
-            pos_id, error, current_price,
-            datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
-        )
-        await self.send(msg)
-
-    async def notify_price_update(self, current_price: float, open_positions: List[Dict], 
-                                   total_realized: float):
-        if not open_positions:
-            return
-
-        lines = ["📊 <b>Portfolio Update - Price: $%.2f</b>\n" % current_price]
-
-        total_unrealized = 0.0
-        for pos in open_positions:
-            pnl = pos["current_pnl"]
-            total_unrealized += pnl
-            emoji = "🟢" if pnl > 0 else "🔴" if pnl < 0 else "⚪"
-            lines.append(
-                "#%s: Buy@%.2f | Now: %s $%.4f (%.2f%%) | High: %.2f | %.1fh" % (
-                    pos["id"], pos["buy_price"], emoji, pnl,
-                    pos["current_pct"], pos["highest"], pos["age_hours"]
-                )
-            )
-
-        lines.append("\n<b>Unrealized:</b> <code>$%.4f</code>" % total_unrealized)
-        lines.append("<b>Realized:</b> <code>$%.4f</code>" % total_realized)
-
-        await self.send("\n".join(lines))
-
-    async def notify_startup(self, proxy_info: str = ""):
-        msg = (
-            "🚀 <b>Bot Started!</b>\n\n"
-            "<b>Settings:</b>\n"
-            "• Min Profit: $%.2f / %.1f%%\n"
-            "• Profit Targets: %s\n"
-            "• Cooldown: %d min\n"
-            "• Check Interval: %d sec\n\n"
-            "%s"
-            "<b>Policy: NEVER sell at loss</b>\n"
-            "<b>Notifications enabled for all operations</b>"
-        ) % (
-            self.config.min_profit_usdt, self.config.min_profit_pct,
-            ", ".join("%.1f%%" % t for t in self.config.profit_targets),
-            self.config.cooldown_seconds // 60,
-            self.config.check_interval,
-            ("<b>Proxy:</b> %s\n\n" % proxy_info) if proxy_info else ""
-        )
-        await self.send(msg)
-
-    async def notify_proxy_refresh(self, proxy_count: int, working_count: int, best_proxy: str, response_time: float):
-        msg = (
-            "🔄 <b>Proxy Refresh Complete</b>\n\n"
-            "<b>Total fetched:</b> %d\n"
-            "<b>Working:</b> %d\n"
-            "<b>Best proxy:</b> <code>%s</code>\n"
-            "<b>Response time:</b> <code>%.2fs</code>\n\n"
-            "<b>Time:</b> %s"
-        ) % (
-            proxy_count, working_count, best_proxy, response_time,
-            datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
-        )
-        await self.send(msg)
-
-    async def notify_error(self, error: str, context: str = ""):
-        msg = (
-            "🚨 <b>Bot Error!</b>\n\n"
-            "<b>Context:</b> %s\n"
-            "<b>Error:</b> <code>%s</code>\n\n"
-            "<b>Time:</b> %s\n\n"
-            "Retrying..."
-        ) % (
-            context or "Unknown", error,
-            datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
-        )
-        await self.send(msg)
-
-    async def notify_daily_summary(self, stats: Dict):
-        msg = (
-            "📋 <b>Daily Summary</b>\n\n"
-            "<b>Stats:</b>\n"
-            "• Closed: %d\n"
-            "• Open: %d\n"
-            "• Total Profit: <code>$%.4f</code> USDT\n\n"
-            "<b>%s</b>"
-        ) % (
-            stats["closed_count"], stats["open_count"],
-            stats["total_realized_profit"],
-            datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
-        )
-        await self.send(msg)
-
-
-# ==========================================
-# SMART RETRY SYSTEM
-# ==========================================
-
-class RetryManager:
-    def __init__(self, config: Config):
-        self.config = config
-        self.failure_count = 0
-        self.circuit_open = False
-        self.circuit_reset_time = 0
-
-    def get_delay(self) -> float:
-        if self.circuit_open:
-            if time.time() - self.circuit_reset_time > 60:
-                self.circuit_open = False
-                self.failure_count = 0
-                return 1.0
-            return self.config.max_retry_delay
-
-        delay = min(self.config.base_retry_delay * (2 ** self.failure_count), 
-                    self.config.max_retry_delay)
-        return delay
-
-    def record_success(self):
-        if self.failure_count > 0:
-            logging.info("Connection restored after %d failures" % self.failure_count)
-        self.failure_count = 0
-
-    def record_failure(self, error: str) -> float:
-        self.failure_count += 1
-        if self.failure_count >= self.config.max_retries:
-            self.circuit_open = True
-            self.circuit_reset_time = time.time()
-            logging.error("Circuit breaker after %d failures" % self.failure_count)
-        else:
-            delay = self.get_delay()
-            logging.warning("Failure #%d: %s. Retry in %.1fs..." % (self.failure_count, error, delay))
-            return delay
-        return self.config.max_retry_delay
-
-
-# ==========================================
-# PRICE ENGINE WITH PROXY
+# PRICE ENGINE
 # ==========================================
 
 class PriceEngine:
-    def __init__(self, proxy_manager: AdvancedProxyManager):
+    def __init__(self, proxy_manager: ProxyManager):
         self.proxy_manager = proxy_manager
-        self.price_cache = deque(maxlen=1000)
         self.last_price = 0.0
-        self.last_update = 0
-        self._lock = asyncio.Lock()
 
     async def get_price(self) -> Dict:
-        """جلب السعر مع دعم البروكسي"""
         proxy_dict = self.proxy_manager.get_proxy_dict()
 
-        try:
-            # محاولة مع البروكسي
-            if proxy_dict:
-                connector = aiohttp.TCPConnector(ssl=False)
-                async with aiohttp.ClientSession(connector=connector) as session:
+        # Try with proxy
+        if proxy_dict:
+            try:
+                async with aiohttp.ClientSession() as session:
                     async with session.get(
                         "https://testnet.binance.vision/api/v3/ticker/price?symbol=BTCUSDT",
                         proxy=proxy_dict.get("http"),
@@ -817,16 +656,12 @@ class PriceEngine:
                     ) as resp:
                         if resp.status == 200:
                             data = await resp.json()
-                            price = float(data.get("price", 0))
-                            async with self._lock:
-                                self.last_price = price
-                                self.last_update = time.time()
-                                self.price_cache.append({"price": price, "timestamp": time.time()})
-                            return {"last": price, "source": "binance_proxy"}
-        except Exception as e:
-            logging.warning("Proxy price fetch failed: %s" % str(e))
+                            self.last_price = float(data.get("price", 0))
+                            return {"last": self.last_price, "source": "binance_proxy"}
+            except Exception as e:
+                logging.warning("Proxy fetch failed: %s" % str(e))
 
-        # Fallback: CoinGecko بدون بروكسي
+        # Fallback: CoinGecko
         try:
             async with aiohttp.ClientSession() as session:
                 async with session.get(
@@ -835,100 +670,40 @@ class PriceEngine:
                 ) as resp:
                     if resp.status == 200:
                         data = await resp.json()
-                        price = data.get("bitcoin", {}).get("usd", 0)
-                        async with self._lock:
-                            self.last_price = price
-                            self.last_update = time.time()
-                            self.price_cache.append({"price": price, "timestamp": time.time()})
-                        return {"last": price, "source": "coingecko_fallback"}
+                        self.last_price = data.get("bitcoin", {}).get("usd", 0)
+                        return {"last": self.last_price, "source": "coingecko"}
         except Exception as e:
             logging.error("All price sources failed: %s" % str(e))
             raise
 
-    def get_stats(self) -> Dict:
-        if len(self.price_cache) < 2:
-            return {}
-        prices = [c["price"] for c in self.price_cache]
-        return {
-            "high_24h": max(prices),
-            "low_24h": min(prices)
-        }
-
 
 # ==========================================
-# MAIN TRADING BOT
+# MAIN BOT
 # ==========================================
 
 class TradingBot:
     def __init__(self):
         self.config = Config()
-        self.proxy_manager = AdvancedProxyManager(max_proxies=self.config.proxy_max_count)
+        self.proxy_manager = ProxyManager(max_proxies=self.config.proxy_max_count)
         self.price_engine = PriceEngine(self.proxy_manager)
         self.positions = PositionManager(self.config)
-        self.retry = RetryManager(self.config)
         self.notifier = TelegramNotifier(self.config)
         self.running = False
         self.processed_signals = set()
         self.last_buy_time = 0
         self._cycle_count = 0
-        self._proxy_refresh_count = 0
 
     async def initialize(self):
-        """تهيئة البوت مع البروكسي"""
         logging.info("=" * 60)
-        logging.info("INITIALIZING BOT WITH ADVANCED PROXY SYSTEM")
+        logging.info("BOT INITIALIZATION")
         logging.info("=" * 60)
 
-        # جلب واختبار البروكسيات
+        # Refresh proxies
         best_proxy = await self.proxy_manager.refresh_proxies()
-
         if best_proxy:
-            logging.info("Bot initialized with proxy: %s" % best_proxy)
+            logging.info("Using proxy: %s" % best_proxy)
         else:
-            logging.warning("No working proxy found, will use fallback sources")
-
-    async def refresh_proxy_if_needed(self):
-        """تحديث البروكسي إذا لزم الأمر"""
-        if time.time() - self.proxy_manager.last_refresh > self.config.proxy_refresh_interval:
-            logging.info("Refreshing proxy list...")
-            await self.proxy_manager.refresh_proxies()
-
-            if self.proxy_manager.best_result:
-                await self.notifier.notify_proxy_refresh(
-                    len(self.proxy_manager.proxy_list),
-                    len(self.proxy_manager.working_proxies),
-                    self.proxy_manager.best_proxy,
-                    self.proxy_manager.best_result.response_time
-                )
-
-    async def smart_execute(self, func: Callable, *args, **kwargs) -> Any:
-        for attempt in range(self.config.max_retries):
-            try:
-                result = await func(*args, **kwargs)
-                self.retry.record_success()
-                return result
-            except Exception as e:
-                error_str = str(e)
-
-                # إذا كان الخطأ بسبب البروكسي
-                if "proxy" in error_str.lower() or "connection" in error_str.lower() or "451" in error_str:
-                    logging.warning("Proxy/Connection error detected, switching proxy...")
-                    await self.proxy_manager.mark_proxy_failed(self.proxy_manager.best_proxy)
-
-                    # محاولة مع بروكسي آخر
-                    next_proxy = await self.proxy_manager.get_next_proxy()
-                    if next_proxy:
-                        logging.info("Switched to next proxy: %s" % next_proxy)
-                    else:
-                        # إعادة جلب البروكسيات
-                        await self.proxy_manager.refresh_proxies()
-
-                delay = self.retry.record_failure(error_str)
-                if attempt < self.config.max_retries - 1:
-                    await asyncio.sleep(delay)
-                else:
-                    raise
-        return None
+            logging.warning("No proxy, using CoinGecko fallback")
 
     async def check_buy(self, now: datetime) -> Optional[Position]:
         if self.positions.get_open_count() >= self.config.max_buys:
@@ -951,98 +726,60 @@ class TradingBot:
             return None
 
         try:
-            price_data = await self.smart_execute(self.price_engine.get_price)
+            price_data = await self.price_engine.get_price()
             current_price = price_data["last"]
         except Exception as e:
             logging.error("Price fetch failed: %s" % str(e))
             return None
 
-        stats = self.price_engine.get_stats()
-        low_24h = stats.get("low_24h", current_price)
-        if current_price > low_24h * 1.001:
-            return None
-
         raw_amount = self.config.trade_usdt_per_buy / current_price
         amount = max(raw_amount, self.config.min_btc_amount)
 
-        # تنفيذ الشراء (محاكاة لأننا نستخدم بيانات فقط)
-        try:
-            buy_fee = (current_price * amount) * self.config.fee_rate
-            total_cost = (current_price * amount) + buy_fee
+        buy_fee = (current_price * amount) * self.config.fee_rate
+        total_cost = (current_price * amount) + buy_fee
 
-            pos = await self.positions.create_position(
-                current_price, amount, buy_fee, total_cost, buy_reason
-            )
+        pos = await self.positions.create_position(
+            current_price, amount, buy_fee, total_cost, buy_reason
+        )
 
-            self.last_buy_time = time.time()
-            await self.notifier.notify_buy_success(pos)
+        self.last_buy_time = time.time()
 
-            logging.info("BUY #%s: %.6f BTC @ %.2f" % (pos.id, amount, current_price))
-            return pos
+        # Notify
+        await self.notifier.notify_buy_success(
+            pos.id, current_price, amount, total_cost, buy_reason
+        )
 
-        except Exception as e:
-            logging.error("Buy failed: %s" % str(e))
-            await self.notifier.notify_buy_failed(str(e), current_price, amount)
-            return None
+        logging.info("BUY #%s: %.6f BTC @ %.2f" % (pos.id, amount, current_price))
+        return pos
 
-    async def check_sell(self) -> List[Dict]:
-        sold_results = []
-
-        try:
-            price_data = await self.smart_execute(self.price_engine.get_price)
-            current_price = price_data["last"]
-        except Exception as e:
-            logging.error("Price fetch for sell failed: %s" % str(e))
-            return sold_results
-
-        ready_to_sell = await self.positions.check_all_positions(current_price)
-
-        for pos, reason in ready_to_sell:
-            try:
-                result = await self.positions.close_position(pos.id, current_price, reason)
-
-                if result:
-                    await self.notifier.notify_sell_success(
-                        pos, result, reason, self.positions.total_realized_profit
-                    )
-
-                    logging.info("SELL #%s: +$%.4f (%.2f%%)" % (pos.id, pos.net_profit, pos.profit_pct))
-                    sold_results.append(result)
-
-            except Exception as e:
-                logging.error("Sell failed for #%s: %s" % (pos.id, str(e)))
-                await self.notifier.notify_sell_failed(pos.id, str(e), current_price)
-
-        return sold_results
-
-    async def send_periodic_update(self):
+    async def check_sell(self):
         try:
             price_data = await self.price_engine.get_price()
             current_price = price_data["last"]
-            open_details = self.positions.get_open_positions_details(current_price)
-
-            if open_details:
-                await self.notifier.notify_price_update(
-                    current_price, open_details, self.positions.total_realized_profit
-                )
         except Exception as e:
-            logging.warning("Periodic update failed: %s" % str(e))
+            logging.error("Price fetch failed: %s" % str(e))
+            return
+
+        ready = await self.positions.check_all_positions(current_price)
+
+        for pos, reason in ready:
+            try:
+                result = await self.positions.close_position(pos.id, current_price, reason)
+                if result:
+                    await self.notifier.notify_sell_success(
+                        pos.id, pos.buy_price, current_price, pos.amount,
+                        pos.net_profit, pos.profit_pct, reason,
+                        self.positions.total_realized_profit
+                    )
+                    logging.info("SELL #%s: +$%.4f (%.2f%%)" % (pos.id, pos.net_profit, pos.profit_pct))
+            except Exception as e:
+                logging.error("Sell failed: %s" % str(e))
 
     async def run_cycle(self):
         now = datetime.now(timezone.utc)
-
-        # تحديث البروكسي كل 10 دقائق
-        await self.refresh_proxy_if_needed()
-
         await self.check_sell()
         await self.check_buy(now)
-
         self._cycle_count += 1
-        if self._cycle_count % 30 == 0:
-            await self.send_periodic_update()
-
-        if now.hour == 0 and now.minute == 0 and now.second < 5:
-            await self.notifier.notify_daily_summary(self.positions.get_stats())
 
     async def run(self):
         self.running = True
@@ -1050,19 +787,28 @@ class TradingBot:
         async with self.notifier:
             await self.initialize()
 
-            proxy_info = self.proxy_manager.best_proxy or "Direct/Fallback"
-            await self.notifier.notify_startup(proxy_info)
+            # Send startup notification
+            proxy_info = self.proxy_manager.best_proxy or "CoinGecko Fallback"
+            await self.notifier.notify_startup(proxy_info, "LIVE")
+
+            # Send test message
+            test_success = await self.notifier.notify_test()
+            if test_success:
+                logging.info("✅ Test message sent successfully")
+            else:
+                logging.error("❌ Test message failed")
+
+            # Log Telegram stats
+            stats = self.notifier.get_stats()
+            logging.info("Telegram stats: %s" % json.dumps(stats))
 
             while self.running:
                 start = time.time()
                 try:
                     await self.run_cycle()
-                    self.retry.record_success()
                 except Exception as e:
-                    delay = self.retry.record_failure(str(e))
+                    logging.error("Cycle error: %s" % str(e))
                     await self.notifier.notify_error(str(e), "Main cycle")
-                    await asyncio.sleep(delay)
-                    continue
 
                 elapsed = time.time() - start
                 sleep_time = max(0, self.config.check_interval - elapsed)
@@ -1082,10 +828,20 @@ if __name__ == "__main__":
         level=logging.INFO,
         format="%(asctime)s | %(levelname)s | %(message)s",
         handlers=[
-            logging.FileHandler("bot_proxy_advanced.log"),
-            logging.StreamHandler()
+            logging.FileHandler("bot_debug.log"),
+            logging.StreamHandler(sys.stdout)
         ]
     )
+
+    # Log environment variables (masked)
+    token = os.getenv("TELEGRAM_TOKEN", "")
+    chat_id = os.getenv("TELEGRAM_CHAT_ID", "")
+    logging.info("=" * 60)
+    logging.info("ENVIRONMENT CHECK")
+    logging.info("=" * 60)
+    logging.info("TELEGRAM_TOKEN: %s (length: %d)" % ("SET" if token else "EMPTY", len(token)))
+    logging.info("TELEGRAM_CHAT_ID: %s (length: %d)" % ("SET" if chat_id else "EMPTY", len(chat_id)))
+    logging.info("=" * 60)
 
     bot = TradingBot()
 
@@ -1103,3 +859,4 @@ if __name__ == "__main__":
     except Exception as e:
         logging.critical("Fatal: %s" % str(e))
         raise
+
