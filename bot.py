@@ -1,3 +1,4 @@
+
 import asyncio
 import aiohttp
 import json
@@ -35,15 +36,16 @@ class Config:
     min_profit_pct: float = 0.5
     profit_targets: List[float] = None
 
-    cooldown_seconds: int = 600
+    cooldown_seconds: int = 300
 
     max_retries: int = 5
     base_retry_delay: float = 1.0
     max_retry_delay: float = 60.0
     check_interval: int = 3
 
-    proxy_refresh_interval: int = 600
+    proxy_refresh_interval: int = 600  # إعادة جلب البروكسيات كل 10 دقائق
     proxy_max_count: int = 150
+    proxy_retry_on_fail: bool = True  # إعادة جلب عند الفشل
 
     schedule: List[Dict] = None
 
@@ -727,8 +729,8 @@ class PriceEngine:
     def __init__(self, proxy_manager: ProxyManager):
         self.proxy_manager = proxy_manager
         self.last_price = 0.0
-        self.price_history: deque = deque(maxlen=14400)  # 24 ساعة من الأسعار
-        self.hourly_prices: deque = deque(maxlen=12)  # سعر كل ساعة
+        self.price_history: deque = deque(maxlen=1440)  # 12 ساعة من الأسعار (30 ثانية فحص)
+        self.hourly_prices: deque = deque(maxlen=12)  # سعر كل ساعة (12 ساعة)
         self.last_hourly_save = 0
 
     def add_price(self, price: float):
@@ -740,8 +742,8 @@ class PriceEngine:
             self.hourly_prices.append(price)
             self.last_hourly_save = now
 
-    def get_24h_low(self) -> float:
-        """أدنى سعر في 24 ساعة"""
+    def get_12h_low(self) -> float:
+        """أدنى سعر في 12 ساعة"""
         if not self.price_history:
             return float('inf')
         return min(self.price_history)
@@ -781,9 +783,11 @@ class PriceEngine:
                             self.last_price = float(data.get("price", 0))
                             return {"last": self.last_price, "source": "binance_proxy"}
             except Exception as e:
-                logging.warning("فشل جلب البروكسي: %s" % str(e))
+                logging.warning("⚠️ فشل البروكسي الحالي: %s" % str(e))
+                # Return None to signal proxy failure - TradingBot will handle refresh
+                return {"last": 0, "source": "proxy_failed", "error": str(e)}
 
-        # Fallback: CoinGecko
+        # Fallback: CoinGecko (no proxy)
         try:
             async with aiohttp.ClientSession() as session:
                 async with session.get(
@@ -795,8 +799,8 @@ class PriceEngine:
                         self.last_price = data.get("bitcoin", {}).get("usd", 0)
                         return {"last": self.last_price, "source": "coingecko"}
         except Exception as e:
-            logging.error("فشلت جميع مصادر السعر: %s" % str(e))
-            raise
+            logging.error("❌ فشلت جميع مصادر السعر: %s" % str(e))
+            return {"last": 0, "source": "all_failed", "error": str(e)}
 
 
 # ==========================================
@@ -816,10 +820,13 @@ class TradingBot:
         self._cycle_count = 0
         self.start_time = 0
         self.max_runtime_hours = 6  # [TIME] عدد الساعات حتى التوقف التلقائي
-        self.price_history: deque = deque(maxlen=28800)  # سجل الأسعار (24 ساعة × 3600 ثانية / 3 ثواني فحص)
-        self.low24h_buy_count = 0       # عدد مرات الشراء عبر شرط أدنى سعر 24 ساعة
+        self.price_history: deque = deque(maxlen=1440)  # سجل الأسعار (12 ساعة × 3600 ثانية / 30 ثانية فحص)
+        self.low24h_buy_count = 0       # عدد مرات الشراء عبر شرط أدنى سعر 12 ساعة
         self.max_low24h_buys = 2        # الحد الأقصى للشراء عبر هذا الشرط قبل البيع
         self.last_low24h_buy_price = 0.0  # سعر آخر شراء عبر هذا الشرط
+        self.proxy_fail_count = 0       # عدد مرات فشل البروكسي
+        self.max_proxy_fails = 3        # الحد الأقصى قبل إعادة الجلب
+        self.last_proxy_refresh = 0     # وقت آخر تحديث للبروكسي
 
     def save_state(self):
         """حفظ حالة البوت إلى ملف"""
@@ -877,7 +884,7 @@ class TradingBot:
                 # Check if signal is in the future and not processed
                 if signal_dt > now and signal_time_str not in self.processed_signals:
                     if signal["type"] in ["نزول", "صعود ونزول"]:
-                        future_signals.append((signal_dt, signal_time_str))
+                        future_signals.append((signal_dt, signal_time_str, signal["type"]))
             except ValueError:
                 continue
 
@@ -885,6 +892,33 @@ class TradingBot:
             future_signals.sort(key=lambda x: x[0])
             return future_signals[0][1]
         return None
+
+    def get_upcoming_signals(self, hours_ahead: int = 2) -> List[Dict]:
+        """الحصول على الإشارات القادمة خلال الساعات القادمة"""
+        now = datetime.now(timezone.utc)
+        upcoming = []
+
+        for signal in self.config.schedule:
+            signal_time_str = signal["time"]
+            try:
+                signal_dt = datetime.strptime(signal_time_str, "%Y-%m-%d %H:%M").replace(tzinfo=timezone.utc)
+                diff = signal_dt - now
+                hours_until = diff.total_seconds() / 3600
+
+                # إشارة قادمة خلال الساعات القادمة ولم تُعالج
+                if 0 < hours_until <= hours_ahead and signal_time_str not in self.processed_signals:
+                    if signal["type"] in ["نزول", "صعود ونزول"]:
+                        upcoming.append({
+                            "time": signal_time_str,
+                            "type": signal["type"],
+                            "hours_until": hours_until,
+                            "minutes_until": (diff.total_seconds() % 3600) / 60
+                        })
+            except ValueError:
+                continue
+
+        upcoming.sort(key=lambda x: x["hours_until"])
+        return upcoming
 
     def load_state(self) -> bool:
         """استعادة حالة البوت من ملف"""
@@ -935,9 +969,9 @@ class TradingBot:
 
             # Restore price history
             if state.get("price_history"):
-                self.price_engine.price_history = deque(state["price_history"], maxlen=28800)
+                self.price_engine.price_history = deque(state["price_history"], maxlen=1440)
             if state.get("hourly_prices"):
-                self.price_engine.hourly_prices = deque(state["hourly_prices"], maxlen=24)
+                self.price_engine.hourly_prices = deque(state["hourly_prices"], maxlen=12)
             self.price_engine.last_hourly_save = state.get("last_hourly_save", 0)
 
             saved_at = state.get("saved_at", "unknown")
@@ -961,7 +995,26 @@ class TradingBot:
         self.load_state()
 
         # Refresh proxies
+        await self.refresh_proxies()
+
+    async def refresh_proxies(self) -> bool:
+        """جلب بروكسيات جديدة مع إشعار"""
+        logging.info("🔄 جاري جلب بروكسيات جديدة...")
         best_proxy = await self.proxy_manager.refresh_proxies()
+        self.last_proxy_refresh = time.time()
+
+        if best_proxy:
+            logging.info("✅ تم جلب بروكسي جديد: %s" % best_proxy)
+            await self.notifier.notify_proxy_refresh(
+                len(self.proxy_manager.working_proxies),
+                len([p for p in self.proxy_manager.working_proxies if p]),
+                best_proxy,
+                self.proxy_manager.working_proxies[0]["time"] if self.proxy_manager.working_proxies else 0
+            )
+            return True
+        else:
+            logging.warning("❌ فشل جلب البروكسيات")
+            return False
         if best_proxy:
             logging.info("استخدام البروكسي: %s" % best_proxy)
         else:
@@ -993,42 +1046,65 @@ class TradingBot:
                 if signal["type"] in ["نزول", "صعود ونزول"]:
                     # تحقق من النزول الحقيقي: السعر قبل ساعة أعلى من الحالي
                     if self.price_engine.is_real_drop(current_price, drop_threshold=0.01):
-                        buy_reason = "نزول حقيقي عند %s | السعر قبل ساعة: %.2f | الحالي: %.2f" % (
-                            signal["time"],
-                            self.price_engine.get_price_1h_ago() or 0,
-                            current_price
+                        price_1h = self.price_engine.get_price_1h_ago() or 0
+                        drop_pct = ((price_1h - current_price) / price_1h * 100) if price_1h > 0 else 0
+                        buy_reason = "نزول حقيقي عند %s | السعر قبل ساعة: %.2f | الحالي: %.2f | النزول: %.2f%%" % (
+                            signal["time"], price_1h, current_price, drop_pct
+                        )
+                        # إشعار بأن النزول حقيقي وتم الشراء
+                        await self.notifier.send(
+                            "[SIGNAL] <b>موعد صحيح - تم الشراء</b>\n\n"
+                            "<b>الوقت:</b> <code>%s</code>\n"
+                            "<b>النوع:</b> <code>%s</code>\n"
+                            "<b>السعر قبل ساعة:</b> <code>%.2f</code>\n"
+                            "<b>السعر الحالي:</b> <code>%.2f</code>\n"
+                            "<b>نسبة النزول:</b> <code>%.2f%%</code> ✅\n\n"
+                            "🟢 <b>النتيجة:</b> نزول حقيقي - تم الشراء"
+                            % (signal["time"], signal["type"], price_1h, current_price, drop_pct)
                         )
                         condition_met = True
                     else:
-                        logging.info("وقت الإشارة %s وصل لكن لا يوجد نزول حقيقي (السعر قبل ساعة: %.2f, الحالي: %.2f)" % (
-                            signal["time"],
-                            self.price_engine.get_price_1h_ago() or 0,
-                            current_price
+                        # إشعار بأن الوقت وصل لكن لا يوجد نزول حقيقي
+                        price_1h = self.price_engine.get_price_1h_ago() or 0
+                        drop_pct = ((price_1h - current_price) / price_1h * 100) if price_1h > 0 else 0
+                        logging.info("⚠️ وقت الإشارة %s وصل لكن لا يوجد نزول حقيقي (السعر قبل ساعة: %.2f, الحالي: %.2f, النزول: %.2f%%)" % (
+                            signal["time"], price_1h, current_price, drop_pct
                         ))
+                        await self.notifier.send(
+                            "[SIGNAL] <b>موعد كاذب - لم يتم الشراء</b>\n\n"
+                            "<b>الوقت:</b> <code>%s</code>\n"
+                            "<b>النوع:</b> <code>%s</code>\n"
+                            "<b>السعر قبل ساعة:</b> <code>%.2f</code>\n"
+                            "<b>السعر الحالي:</b> <code>%.2f</code>\n"
+                            "<b>نسبة النزول:</b> <code>%.2f%%</code> (مطلوب: 1%%+)\n\n"
+                            "❌ <b>السبب:</b> النزول غير حقيقي - لم يتم الشراء"
+                            % (signal["time"], signal["type"], price_1h, current_price, drop_pct)
+                        )
                     self.processed_signals.add(signal["time"])
                     break
 
-        # === الشرط الثاني: أدنى سعر في 24 ساعة ===
-        if not condition_met:
+        # === الشرط الثاني: أدنى سعر في 12 ساعة (مستقل - يعمل دائماً) ===
+        # هذا الشرط يتحقق بشكل مستمر بغض النظر عن الجدول
+        if not condition_met:  # إذا لم يشتري عبر الجدول، تحقق من هذا الشرط
             # تحقق من عدم تجاوز الحد الأقصى للشراء عبر هذا الشرط
             if self.low24h_buy_count >= self.max_low24h_buys:
-                logging.info("⚠️ تم تجاوز الحد الأقصى للشراء عبر أدنى سعر 24 ساعة (%d/%d) - في انتظار البيع" % (
+                logging.info("⚠️ تم تجاوز الحد الأقصى للشراء عبر أدنى سعر 12 ساعة (%d/%d) - في انتظار البيع" % (
                     self.low24h_buy_count, self.max_low24h_buys
                 ))
             else:
-                low_24h = self.price_engine.get_24h_low()
+                low_12h = self.price_engine.get_12h_low()
                 # تأكد من أن السعر أقل من آخر شراء (لمنع الشراء بنفس السعر)
-                if current_price <= low_24h * 1.001 and current_price < self.last_low24h_buy_price * 0.995:
-                    buy_reason = "أدنى سعر 24 ساعة: %.2f | السعر الحالي: %.2f | الشراء #%d/%d" % (
-                        low_24h, current_price, self.low24h_buy_count + 1, self.max_low24h_buys
+                if current_price <= low_12h * 1.001 and current_price < self.last_low24h_buy_price * 0.995:
+                    buy_reason = "أدنى سعر 12 ساعة: %.2f | السعر الحالي: %.2f | الشراء #%d/%d" % (
+                        low_12h, current_price, self.low24h_buy_count + 1, self.max_low24h_buys
                     )
                     condition_met = True
                     self.low24h_buy_count += 1
                     self.last_low24h_buy_price = current_price
-                    logging.info("✅ شرط أدنى سعر 24 ساعة متحقق! (الشراء %d/%d)" % (
+                    logging.info("✅ شرط أدنى سعر 12 ساعة متحقق! (الشراء %d/%d)" % (
                         self.low24h_buy_count, self.max_low24h_buys
                     ))
-                elif current_price <= low_24h * 1.001:
+                elif current_price <= low_12h * 1.001:
                     logging.info("⚠️ السعر أدنى 24 ساعة لكنه أعلى من آخر شراء بقليل (%.2f vs %.2f) - تخطي" % (
                         current_price, self.last_low24h_buy_price
                     ))
@@ -1089,10 +1165,10 @@ class TradingBot:
                     logging.info("بيع وهمي #%s: +$%.4f (%.2f%%) (Paper Trading)" % (
                         pos.id, pos.net_profit, pos.profit_pct
                     ))
-                    # إعادة تعيين عداد الشراء عبر أدنى سعر 24 ساعة بعد البيع
+                    # إعادة تعيين عداد الشراء عبر أدنى سعر 12 ساعة بعد البيع
                     self.low24h_buy_count = 0
                     self.last_low24h_buy_price = 0.0
-                    logging.info("🔄 تم إعادة تعيين عداد أدنى سعر 24 ساعة بعد البيع")
+                    logging.info("🔄 تم إعادة تعيين عداد أدنى سعر 12 ساعة بعد البيع")
             except Exception as e:
                 logging.error("فشل البيع: %s" % str(e))
 
@@ -1109,9 +1185,32 @@ class TradingBot:
         try:
             price_data = await self.price_engine.get_price()
             current_price = price_data["last"]
+
+            # Handle proxy failure
+            if price_data.get("source") == "proxy_failed":
+                self.proxy_fail_count += 1
+                logging.warning("⚠️ فشل البروكسي (%d/%d)" % (self.proxy_fail_count, self.max_proxy_fails))
+
+                # Refresh proxies if failed too many times or if 10 minutes passed
+                if self.proxy_fail_count >= self.max_proxy_fails or (time.time() - self.last_proxy_refresh) > 600:
+                    logging.info("🔄 إعادة جلب بروكسيات جديدة...")
+                    await self.refresh_proxies()
+                    self.proxy_fail_count = 0
+
+                # Try again with new proxy
+                if self.proxy_manager.best_proxy:
+                    price_data = await self.price_engine.get_price()
+                    current_price = price_data["last"]
+            else:
+                self.proxy_fail_count = 0  # Reset on success
+
+            if current_price <= 0:
+                logging.error("❌ لم يتم جلب سعر صالح")
+                return
+
             self.price_engine.add_price(current_price)
         except Exception as e:
-            logging.error("فشل جلب السعر: %s" % str(e))
+            logging.error("❌ فشل جلب السعر: %s" % str(e))
             return
 
         now = datetime.now(timezone.utc)
@@ -1119,26 +1218,21 @@ class TradingBot:
         await self.check_buy(now, current_price)
         self._cycle_count += 1
 
-        # إشعار بأقرب وقت للجدول كل 100 دورة (~5 دقائق)
+        # إشعار بالإشارات القادمة كل 100 دورة (~5 دقائق)
         if self._cycle_count % 100 == 0:
-            next_time = self.get_next_schedule_time()
-            if next_time:
-                # Calculate time until
-                now_dt = datetime.now(timezone.utc)
-                next_dt = datetime.strptime(next_time, "%Y-%m-%d %H:%M").replace(tzinfo=timezone.utc)
-                diff = next_dt - now_dt
-                total_seconds = int(diff.total_seconds())
-                hours = total_seconds // 3600
-                minutes = (total_seconds % 3600) // 60
-                if hours > 0 and minutes > 0:
-                    time_until = "%d ساعة و %d دقيقة" % (hours, minutes)
-                elif hours > 0:
-                    time_until = "%d ساعة" % hours
-                elif minutes > 0:
-                    time_until = "%d دقيقة" % minutes
-                else:
-                    time_until = "أقل من دقيقة"
-                await self.notifier.notify_next_schedule(next_time, time_until)
+            upcoming = self.get_upcoming_signals(hours_ahead=2)
+            if upcoming:
+                sig = upcoming[0]  # Next signal
+                total_minutes = int(sig["hours_until"] * 60 + sig["minutes_until"])
+                if total_minutes <= 60:  # Only notify if within 1 hour
+                    await self.notifier.force_send(
+                        "[SCHEDULE] <b>إشارة قريبة!</b>\n\n"
+                        "📅 <b>الوقت:</b> <code>%s</code>\n"
+                        "<b>النوع:</b> <code>%s</code>\n"
+                        "<b>متبقي:</b> %d دقيقة\n\n"
+                        "⏱️ سيتم فحص السعر قبل ساعة والحالي للتحقق من النزول."
+                        % (sig["time"], sig["type"], total_minutes)
+                    )
 
         # حفظ الحالة كل 10 دورات
         if self._cycle_count % 10 == 0:
@@ -1164,24 +1258,30 @@ class TradingBot:
             balance_info = self.positions.get_balance_info()
             await self.notifier.notify_balance(balance_info)
 
-            # Send next schedule notification
-            next_time = self.get_next_schedule_time()
-            if next_time:
-                now_dt = datetime.now(timezone.utc)
-                next_dt = datetime.strptime(next_time, "%Y-%m-%d %H:%M").replace(tzinfo=timezone.utc)
-                diff = next_dt - now_dt
-                total_seconds = int(diff.total_seconds())
-                hours = total_seconds // 3600
-                minutes = (total_seconds % 3600) // 60
-                if hours > 0 and minutes > 0:
-                    time_until = "%d ساعة و %d دقيقة" % (hours, minutes)
-                elif hours > 0:
-                    time_until = "%d ساعة" % hours
-                elif minutes > 0:
-                    time_until = "%d دقيقة" % minutes
-                else:
-                    time_until = "أقل من دقيقة"
-                await self.notifier.notify_next_schedule(next_time, time_until)
+            # Send next schedule notification with all upcoming signals
+            upcoming = self.get_upcoming_signals(hours_ahead=6)
+            if upcoming:
+                msg = "[SCHEDULE] <b>الإشارات القادمة للشراء</b>\n\n"
+                for sig in upcoming[:3]:  # Show next 3 signals
+                    msg += (
+                        "📅 <b>الوقت:</b> <code>%s</code>\n"
+                        "   <b>النوع:</b> <code>%s</code>\n"
+                        "   <b>متبقي:</b> %d ساعة و %d دقيقة\n\n"
+                    ) % (sig["time"], sig["type"], int(sig["hours_until"]), int(sig["minutes_until"]))
+
+                msg += (
+                    "<b>كيف يعمل الشرط الأول:</b>\n"
+                    "1️⃣  عند وصول الوقت ↑\n"
+                    "2️⃣  يقارن السعر الحالي مع السعر قبل ساعة\n"
+                    "3️⃣  إذا كان النزول ≥ 1%% → ✅ شراء\n"
+                    "4️⃣  إذا كان النزول < 1%% → ❌ تخطي (موعد كاذب)"
+                )
+                await self.notifier.force_send(msg)
+            else:
+                await self.notifier.force_send(
+                    "[SCHEDULE] <b>لا توجد إشارات قادمة خلال 6 ساعات</b>\n\n"
+                    "سيتم الاعتماد على شرط أدنى سعر 12 ساعة فقط."
+                )
 
             # Send test message
             test_success = await self.notifier.notify_test()
