@@ -727,8 +727,8 @@ class PriceEngine:
     def __init__(self, proxy_manager: ProxyManager):
         self.proxy_manager = proxy_manager
         self.last_price = 0.0
-        self.price_history: deque = deque(maxlen=28800)  # 24 ساعة من الأسعار
-        self.hourly_prices: deque = deque(maxlen=24)  # سعر كل ساعة
+        self.price_history: deque = deque(maxlen=14400)  # 24 ساعة من الأسعار
+        self.hourly_prices: deque = deque(maxlen=12)  # سعر كل ساعة
         self.last_hourly_save = 0
 
     def add_price(self, price: float):
