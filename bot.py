@@ -36,7 +36,7 @@ class Config:
     min_btc_amount: float = 0.0001
     fee_rate: float = 0.001
 
-    min_profit_usdt: float = 0.5
+    min_profit_usdt: float = 0.10  # $0.10 minimum profit (after fees, keeps ~$0.08)
     min_profit_pct: float = 0.5
     profit_targets: List[float] = None
 
@@ -55,7 +55,7 @@ class Config:
 
     def __post_init__(self):
         if self.profit_targets is None:
-            self.profit_targets = [1.5, 3.0, 5.0, 8.0]
+            self.profit_targets = [0.8, 1.5, 3.0, 5.0]  # Realistic targets for $10 trades
 
         if self.schedule is None:
             self.schedule = [
@@ -68,13 +68,13 @@ class Config:
                 {"time": "2026-06-18 21:15", "type": "نزول"},
                 {"time": "2026-06-18 22:50", "type": "نزول"},
                 {"time": "2026-06-18 23:10", "type": "نزول"},
-                {"time": "2026-06-19 05:29", "type": "نزول"},
-                {"time": "2026-06-19 11:29", "type": "نزول"},
-                {"time": "2026-06-19 00:29", "type": "نزول"},
-                {"time": "2026-06-19 11:29", "type": "نزول"},
-                {"time": "2026-06-19 15:29", "type": "صعود"},
-                {"time": "2026-06-18 00:29", "type": "نزول"},
-                {"time": "2026-06-19 11:29", "type": "نزول"},
+                {"time": "2026-06-07 05:29", "type": "نزول"},
+                {"time": "2026-06-07 11:29", "type": "نزول"},
+                {"time": "2026-06-08 00:29", "type": "نزول"},
+                {"time": "2026-06-08 11:29", "type": "نزول"},
+                {"time": "2026-06-08 15:29", "type": "صعود"},
+                {"time": "2026-06-09 00:29", "type": "نزول"},
+                {"time": "2026-06-09 11:29", "type": "نزول"},
                 {"time": "2026-06-09 12:59", "type": "صعود"},
                 {"time": "2026-06-10 00:29", "type": "نزول"},
                 {"time": "2026-06-10 11:29", "type": "نزول"},
@@ -606,11 +606,18 @@ class Position:
 
     def should_sell(self, current_price: float, min_profit_usdt: float, 
                      min_profit_pct: float, profit_targets: List[float]) -> tuple[bool, str]:
+        """
+        تحديد ما إذا كان يجب البيع
+
+        الربح الصافي = (سعر البيع - رسوم البيع) - (سعر الشراء + رسوم الشراء)
+        إذا كان الربح الصافي > 0 → نحقق ربح بعد الرسوم ✅
+        """
         net_profit = self.calculate_net_profit(current_price)
         profit_pct = self.calculate_profit_pct(current_price)
 
+        # 🛡️ حماية 1: لا تبيع بخسارة
         if net_profit <= 0:
-            return False, "في انتظار الربح ($%.4f)" % net_profit
+            return False, "في انتظار الربح ($%.4f) - لم يغطِ الرسوم بعد" % net_profit
 
         if net_profit < min_profit_usdt:
             return False, "ربح صغير ($%.4f)" % net_profit
@@ -632,6 +639,11 @@ class Position:
         self.profit_pct = (self.net_profit / self.total_cost) * 100
         self.status = "closed"
         self.sell_time = datetime.now(timezone.utc)
+
+        # Log fee breakdown for transparency
+        logging.info("💰 Fee breakdown for #%s: Buy fee=$%.4f, Sell fee=$%.4f, Total fees=$%.4f, Net profit=$%.4f" % (
+            self.id, self.buy_fee, self.sell_fee, self.buy_fee + self.sell_fee, self.net_profit
+        ))
 
         return {
             "id": self.id,
