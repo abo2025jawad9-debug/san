@@ -40,7 +40,7 @@ class Config:
     max_retries: int = 5
     base_retry_delay: float = 1.0
     max_retry_delay: float = 60.0
-    check_interval: int = 30
+    check_interval: int = 3
 
     proxy_refresh_interval: int = 600
     proxy_max_count: int = 150
