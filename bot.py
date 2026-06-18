@@ -68,9 +68,9 @@ class Config:
                 {"time": "2026-06-18 21:15", "type": "نزول"},
                 {"time": "2026-06-18 22:50", "type": "نزول"},
                 {"time": "2026-06-18 23:10", "type": "نزول"},
-                {"time": "2026-06-07 05:29", "type": "نزول"},
-                {"time": "2026-06-07 11:29", "type": "نزول"},
-                {"time": "2026-06-08 00:29", "type": "نزول"},
+                {"time": "2026-06-19 05:29", "type": "نزول"},
+                {"time": "2026-06-19 11:29", "type": "نزول"},
+                {"time": "2026-06-18 00:29", "type": "نزول"},
                 {"time": "2026-06-08 11:29", "type": "نزول"},
                 {"time": "2026-06-08 15:29", "type": "صعود"},
                 {"time": "2026-06-09 00:29", "type": "نزول"},
@@ -79,7 +79,7 @@ class Config:
                 {"time": "2026-06-10 00:29", "type": "نزول"},
                 {"time": "2026-06-10 11:29", "type": "نزول"},
                 {"time": "2026-06-10 15:29", "type": "نزول"},
-                {"time": "2026-06-11 00:29", "type": "نزول"},
+                {"time": "2026-06-19 00:29", "type": "نزول"},
                 {"time": "2026-06-11 11:29", "type": "نزول"},
                 {"time": "2026-06-11 16:59", "type": "صعود ونزول"},
                 {"time": "2026-06-12 00:29", "type": "نزول"},
@@ -852,6 +852,8 @@ class TradingBot:
                 "open_positions": self.positions.open_positions,
                 "closed_positions": self.positions.closed_positions,
                 "total_realized_profit": self.positions.total_realized_profit,
+                "total_invested": self.positions.total_invested,
+                "total_spent": self.positions.total_spent,
                 "processed_signals": list(self.processed_signals),
                 "last_buy_time": self.last_buy_time,
                 "low24h_buy_count": self.low24h_buy_count,
@@ -978,10 +980,13 @@ class TradingBot:
             self.positions.open_positions = state.get("open_positions", [])
             self.positions.closed_positions = state.get("closed_positions", [])
             self.positions.total_realized_profit = state.get("total_realized_profit", 0.0)
+            self.positions.total_invested = state.get("total_invested", 0.0)
+            self.positions.total_spent = state.get("total_spent", 0.0)
+
             self.processed_signals = set(state.get("processed_signals", []))
             self.last_buy_time = state.get("last_buy_time", 0)
             self.low24h_buy_count = state.get("low24h_buy_count", 0)
-            self.last_low24h_buy_price = state.get("last_low24h_buy_price", 0.0)
+            self.last_low24h_buy_price = state.get("last_low24h_buy_price", float('inf'))
 
             # Restore price history
             if state.get("price_history"):
@@ -1108,22 +1113,27 @@ class TradingBot:
                     self.low24h_buy_count, self.max_low24h_buys
                 ))
             else:
-                low_12h = self.price_engine.get_12h_low()
-                # تأكد من أن السعر أقل من آخر شراء (لمنع الشراء بنفس السعر)
-                if current_price <= low_12h * 1.001 and (self.last_low24h_buy_price == float('inf') or current_price < self.last_low24h_buy_price * 0.995):
-                    buy_reason = "أدنى سعر 12 ساعة: %.2f | السعر الحالي: %.2f | الشراء #%d/%d" % (
-                        low_12h, current_price, self.low24h_buy_count + 1, self.max_low24h_buys
-                    )
-                    condition_met = True
-                    self.low24h_buy_count += 1
-                    self.last_low24h_buy_price = current_price
-                    logging.info("✅ شرط أدنى سعر 12 ساعة متحقق! (الشراء %d/%d)" % (
-                        self.low24h_buy_count, self.max_low24h_buys
-                    ))
-                elif current_price <= low_12h * 1.001:
-                    logging.info("⚠️ السعر أدنى 24 ساعة لكنه أعلى من آخر شراء بقليل (%.2f vs %.2f) - تخطي" % (
-                        current_price, self.last_low24h_buy_price
-                    ))
+                # تحقق من وجود بيانات تاريخية كافية (على الأقل 30 دقيقة = 60 قيمة)
+                history_count = len(self.price_engine.price_history)
+                if history_count < 60:
+                    logging.info("⏳ جمع بيانات الأسعار... (%d/60) - لا يزال مبكراً للشراء عبر أدنى 12 ساعة" % history_count)
+                else:
+                    low_12h = self.price_engine.get_12h_low()
+                    # تأكد من أن السعر أقل من آخر شراء (لمنع الشراء بنفس السعر)
+                    if current_price <= low_12h * 1.001 and (self.last_low24h_buy_price == float('inf') or current_price < self.last_low24h_buy_price * 0.995):
+                        buy_reason = "أدنى سعر 12 ساعة: %.2f | السعر الحالي: %.2f | الشراء #%d/%d" % (
+                            low_12h, current_price, self.low24h_buy_count + 1, self.max_low24h_buys
+                        )
+                        condition_met = True
+                        self.low24h_buy_count += 1
+                        self.last_low24h_buy_price = current_price
+                        logging.info("✅ شرط أدنى سعر 12 ساعة متحقق! (الشراء %d/%d)" % (
+                            self.low24h_buy_count, self.max_low24h_buys
+                        ))
+                    elif current_price <= low_12h * 1.001:
+                        logging.info("⚠️ السعر أدنى 12 ساعة لكنه أعلى من آخر شراء بقليل (%.2f vs %.2f) - تخطي" % (
+                            current_price, self.last_low24h_buy_price
+                        ))
 
         if not condition_met or not buy_reason:
             return None
@@ -1143,6 +1153,9 @@ class TradingBot:
 
         # Get balance info
         balance_info = self.positions.get_balance_info()
+
+        # Save state immediately after buy
+        self.save_state()
 
         # Notify with balance
         await self.notifier.notify_buy_success(
@@ -1181,6 +1194,9 @@ class TradingBot:
                     logging.info("بيع وهمي #%s: +$%.4f (%.2f%%) (Paper Trading)" % (
                         pos.id, pos.net_profit, pos.profit_pct
                     ))
+                    # Save state immediately after sell
+                    self.save_state()
+
                     # إعادة تعيين عداد الشراء عبر أدنى سعر 12 ساعة بعد البيع
                     self.low24h_buy_count = 0
                     self.last_low24h_buy_price = float('inf')
