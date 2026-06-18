@@ -71,15 +71,15 @@ class Config:
                 {"time": "2026-06-19 05:29", "type": "نزول"},
                 {"time": "2026-06-19 11:29", "type": "نزول"},
                 {"time": "2026-06-18 00:29", "type": "نزول"},
-                {"time": "2026-06-08 11:29", "type": "نزول"},
-                {"time": "2026-06-08 15:29", "type": "صعود"},
-                {"time": "2026-06-09 00:29", "type": "نزول"},
+                {"time": "2026-06-19 11:29", "type": "نزول"},
+                {"time": "2026-06-19 15:29", "type": "صعود"},
+                {"time": "2026-06-18 00:29", "type": "نزول"},
                 {"time": "2026-06-09 11:29", "type": "نزول"},
                 {"time": "2026-06-09 12:59", "type": "صعود"},
-                {"time": "2026-06-10 00:29", "type": "نزول"},
+                {"time": "2026-06-19 00:29", "type": "نزول"},
                 {"time": "2026-06-10 11:29", "type": "نزول"},
                 {"time": "2026-06-10 15:29", "type": "نزول"},
-                {"time": "2026-06-19 00:29", "type": "نزول"},
+                {"time": "2026-06-11 00:29", "type": "نزول"},
                 {"time": "2026-06-11 11:29", "type": "نزول"},
                 {"time": "2026-06-11 16:59", "type": "صعود ونزول"},
                 {"time": "2026-06-12 00:29", "type": "نزول"},
@@ -758,33 +758,93 @@ class PriceEngine:
             self.hourly_prices.append(price)
             self.last_hourly_save = now
 
-    def get_12h_low(self) -> float:
-        """أدنى سعر في 12 ساعة"""
-        if not self.price_history:
-            return float('inf')
-        return min(self.price_history)
+    async def get_12h_low(self) -> float:
+        """جلب أدنى سعر في 12 ساعة مباشرة من Binance API"""
+        try:
+            url = "https://testnet.binance.vision/api/v3/klines"
+            params = {
+                "symbol": "BTCUSDT",
+                "interval": "1h",
+                "limit": 12  # 12 شموع = 12 ساعة
+            }
 
-    def get_price_1h_ago(self) -> Optional[float]:
-        """سعر قبل ساعة"""
-        if len(self.hourly_prices) >= 2:
-            return self.hourly_prices[-2]  # السعر قبل الأخير (قبل ساعة)
+            proxy_dict = self.proxy_manager.get_proxy_dict()
+
+            async with aiohttp.ClientSession() as session:
+                if proxy_dict and proxy_dict.get("http"):
+                    async with session.get(url, params=params, proxy=proxy_dict.get("http"),
+                                          timeout=aiohttp.ClientTimeout(total=10), ssl=False) as resp:
+                        if resp.status == 200:
+                            data = await resp.json()
+                            if data and len(data) > 0:
+                                # data[i][3] = low price of each candle
+                                lows = [float(candle[3]) for candle in data]
+                                return min(lows)
+                else:
+                    async with session.get(url, params=params,
+                                          timeout=aiohttp.ClientTimeout(total=10)) as resp:
+                        if resp.status == 200:
+                            data = await resp.json()
+                            if data and len(data) > 0:
+                                lows = [float(candle[3]) for candle in data]
+                                return min(lows)
+        except Exception as e:
+            logging.warning("فشل جلب أدنى سعر 12 ساعة من Binance: %s" % str(e))
+        return float('inf')
+
+    async def get_price_1h_ago(self) -> Optional[float]:
+        """جلب سعر قبل ساعة مباشرة من Binance API"""
+        try:
+            # Calculate timestamp for 1 hour ago
+            one_hour_ago_ms = int((time.time() - 3600) * 1000)
+
+            # Use Binance klines API to get the candle from 1 hour ago
+            url = "https://testnet.binance.vision/api/v3/klines"
+            params = {
+                "symbol": "BTCUSDT",
+                "interval": "1h",
+                "startTime": one_hour_ago_ms,
+                "limit": 1
+            }
+
+            proxy_dict = self.proxy_manager.get_proxy_dict()
+
+            async with aiohttp.ClientSession() as session:
+                if proxy_dict and proxy_dict.get("http"):
+                    async with session.get(url, params=params, proxy=proxy_dict.get("http"), 
+                                          timeout=aiohttp.ClientTimeout(total=10), ssl=False) as resp:
+                        if resp.status == 200:
+                            data = await resp.json()
+                            if data and len(data) > 0:
+                                # data[0][4] = close price of the candle
+                                return float(data[0][4])
+                else:
+                    async with session.get(url, params=params, 
+                                          timeout=aiohttp.ClientTimeout(total=10)) as resp:
+                        if resp.status == 200:
+                            data = await resp.json()
+                            if data and len(data) > 0:
+                                return float(data[0][4])
+        except Exception as e:
+            logging.warning("فشل جلب السعر قبل ساعة من Binance: %s" % str(e))
         return None
 
-    def is_real_drop(self, current_price: float, drop_threshold: float = 0.02) -> bool:
+    async def is_real_drop(self, current_price: float, drop_threshold: float = 0.02) -> bool:
         """
         هل هذا نزول حقيقي؟
         الشرط: السعر قبل ساعة أعلى من السعر الحالي بنسبة drop_threshold
         """
-        price_1h_ago = self.get_price_1h_ago()
+        price_1h_ago = await self.get_price_1h_ago()
         if price_1h_ago is None:
             return False
         price_drop = (price_1h_ago - current_price) / price_1h_ago
         return price_drop >= drop_threshold
 
     async def get_price(self) -> Dict:
+        """جلب السعر - يحاول البروكسي أولاً ثم يستخدم بديل بدون إشعارات مخيفة"""
         proxy_dict = self.proxy_manager.get_proxy_dict()
 
-        # Try with proxy
+        # Try with proxy (silent - no warning on failure)
         if proxy_dict:
             try:
                 async with aiohttp.ClientSession() as session:
@@ -797,13 +857,11 @@ class PriceEngine:
                         if resp.status == 200:
                             data = await resp.json()
                             self.last_price = float(data.get("price", 0))
-                            return {"last": self.last_price, "source": "binance_proxy"}
-            except Exception as e:
-                logging.warning("⚠️ فشل البروكسي الحالي: %s" % str(e))
-                # Return None to signal proxy failure - TradingBot will handle refresh
-                return {"last": 0, "source": "proxy_failed", "error": str(e)}
+                            return {"last": self.last_price, "source": "binance_proxy", "proxy_ok": True}
+            except Exception:
+                pass  # Silently fail - will try fallback
 
-        # Fallback: CoinGecko (no proxy)
+        # Fallback: CoinGecko (no proxy needed)
         try:
             async with aiohttp.ClientSession() as session:
                 async with session.get(
@@ -813,10 +871,18 @@ class PriceEngine:
                     if resp.status == 200:
                         data = await resp.json()
                         self.last_price = data.get("bitcoin", {}).get("usd", 0)
-                        return {"last": self.last_price, "source": "coingecko"}
+                        return {"last": self.last_price, "source": "coingecko", "proxy_ok": False}
         except Exception as e:
             logging.error("❌ فشلت جميع مصادر السعر: %s" % str(e))
-            return {"last": 0, "source": "all_failed", "error": str(e)}
+            return {"last": 0, "source": "all_failed", "error": str(e), "proxy_ok": False}
+
+    async def get_price_with_proxy_check(self) -> Dict:
+        """جلب السعر مع التحقق من حالة البروكسي للتشخيص"""
+        result = await self.get_price()
+        if not result.get("proxy_ok") and result.get("last", 0) > 0:
+            # Price fetched but proxy failed - log once per hour
+            pass  # Silent - price is valid
+        return result
 
 
 # ==========================================
@@ -840,9 +906,7 @@ class TradingBot:
         self.low24h_buy_count = 0       # عدد مرات الشراء عبر شرط أدنى سعر 12 ساعة
         self.max_low24h_buys = 2        # الحد الأقصى للشراء عبر هذا الشرط قبل البيع
         self.last_low24h_buy_price = float('inf')  # سعر آخر شراء عبر هذا الشرط (inf = أي سعر مقبول للشراء الأول)
-        self.proxy_fail_count = 0       # عدد مرات فشل البروكسي
-        self.max_proxy_fails = 3        # الحد الأقصى قبل إعادة الجلب
-        self.last_proxy_refresh = 0     # وقت آخر تحديث للبروكسي
+        self._last_price_source = None  # مصدر السعر الأخير (لتقليل السجلات)
 
     def save_state(self):
         """حفظ حالة البوت إلى ملف"""
@@ -1019,22 +1083,15 @@ class TradingBot:
         await self.refresh_proxies()
 
     async def refresh_proxies(self) -> bool:
-        """جلب بروكسيات جديدة مع إشعار"""
+        """جلب بروكسيات جديدة"""
         logging.info("🔄 جاري جلب بروكسيات جديدة...")
         best_proxy = await self.proxy_manager.refresh_proxies()
-        self.last_proxy_refresh = time.time()
 
         if best_proxy:
-            logging.info("✅ تم جلب بروكسي جديد: %s" % best_proxy)
-            await self.notifier.notify_proxy_refresh(
-                len(self.proxy_manager.working_proxies),
-                len([p for p in self.proxy_manager.working_proxies if p]),
-                best_proxy,
-                self.proxy_manager.working_proxies[0]["time"] if self.proxy_manager.working_proxies else 0
-            )
+            logging.info("✅ تم جلب بروكسي: %s" % best_proxy)
             return True
         else:
-            logging.warning("❌ فشل جلب البروكسيات")
+            logging.info("ℹ️ لا يوجد بروكسي، سيتم استخدام CoinGecko")
             return False
         if best_proxy:
             logging.info("استخدام البروكسي: %s" % best_proxy)
@@ -1066,8 +1123,8 @@ class TradingBot:
             if signal["time"] == time_str and signal["time"] not in self.processed_signals:
                 if signal["type"] in ["نزول", "صعود ونزول"]:
                     # تحقق من النزول الحقيقي: السعر قبل ساعة أعلى من الحالي
-                    if self.price_engine.is_real_drop(current_price, drop_threshold=0.01):
-                        price_1h = self.price_engine.get_price_1h_ago() or 0
+                    if await self.price_engine.is_real_drop(current_price, drop_threshold=0.01):
+                        price_1h = await self.price_engine.get_price_1h_ago() or 0
                         drop_pct = ((price_1h - current_price) / price_1h * 100) if price_1h > 0 else 0
                         buy_reason = "نزول حقيقي عند %s | السعر قبل ساعة: %.2f | الحالي: %.2f | النزول: %.2f%%" % (
                             signal["time"], price_1h, current_price, drop_pct
@@ -1086,7 +1143,7 @@ class TradingBot:
                         condition_met = True
                     else:
                         # إشعار بأن الوقت وصل لكن لا يوجد نزول حقيقي
-                        price_1h = self.price_engine.get_price_1h_ago() or 0
+                        price_1h = await self.price_engine.get_price_1h_ago() or 0
                         drop_pct = ((price_1h - current_price) / price_1h * 100) if price_1h > 0 else 0
                         logging.info("⚠️ وقت الإشارة %s وصل لكن لا يوجد نزول حقيقي (السعر قبل ساعة: %.2f, الحالي: %.2f, النزول: %.2f%%)" % (
                             signal["time"], price_1h, current_price, drop_pct
@@ -1118,7 +1175,7 @@ class TradingBot:
                 if history_count < 60:
                     logging.info("⏳ جمع بيانات الأسعار... (%d/60) - لا يزال مبكراً للشراء عبر أدنى 12 ساعة" % history_count)
                 else:
-                    low_12h = self.price_engine.get_12h_low()
+                    low_12h = await self.price_engine.get_12h_low()
                     # تأكد من أن السعر أقل من آخر شراء (لمنع الشراء بنفس السعر)
                     if current_price <= low_12h * 1.001 and (self.last_low24h_buy_price == float('inf') or current_price < self.last_low24h_buy_price * 0.995):
                         buy_reason = "أدنى سعر 12 ساعة: %.2f | السعر الحالي: %.2f | الشراء #%d/%d" % (
