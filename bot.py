@@ -1,3 +1,7 @@
+"""
+Trading Bot - Telegram Debug Version
+With clear diagnostics and forced notifications
+"""
 
 import asyncio
 import aiohttp
@@ -56,8 +60,8 @@ class Config:
         if self.schedule is None:
             self.schedule = [
                 {"time": "2026-06-19 01:19", "type": "نزول"},
-                {"time": "2026-06-18 02:19", "type": "نزول"},
-                {"time": "2026-06-18 03:29", "type": "نزول"},
+                {"time": "2026-06-19 02:19", "type": "نزول"},
+                {"time": "2026-06-19 03:29", "type": "نزول"},
                 {"time": "2026-06-19 04:15", "type": "صعود ونزول"},
                 {"time": "2026-06-18 23:59", "type": "نزول"},
                 {"time": "2026-06-18 22:40", "type": "صعود"},
@@ -71,10 +75,10 @@ class Config:
                 {"time": "2026-06-19 15:29", "type": "صعود"},
                 {"time": "2026-06-18 00:29", "type": "نزول"},
                 {"time": "2026-06-19 11:29", "type": "نزول"},
-                {"time": "2026-06-19 12:59", "type": "صعود"},
-                {"time": "2026-06-19 00:29", "type": "نزول"},
-                {"time": "2026-06-19 11:29", "type": "نزول"},
-                {"time": "2026-06-19 15:29", "type": "نزول"},
+                {"time": "2026-06-09 12:59", "type": "صعود"},
+                {"time": "2026-06-10 00:29", "type": "نزول"},
+                {"time": "2026-06-10 11:29", "type": "نزول"},
+                {"time": "2026-06-10 15:29", "type": "نزول"},
                 {"time": "2026-06-11 00:29", "type": "نزول"},
                 {"time": "2026-06-11 11:29", "type": "نزول"},
                 {"time": "2026-06-11 16:59", "type": "صعود ونزول"},
@@ -86,8 +90,8 @@ class Config:
                 {"time": "2026-06-14 00:59", "type": "نزول"},
                 {"time": "2026-06-14 10:29", "type": "نزول"},
                 {"time": "2026-06-14 11:59", "type": "نزول"},
-                {"time": "2026-06-18 21:00", "type": "نزول"},
-                {"time": "2026-06-18 00:59", "type": "نزول"}
+                {"time": "2026-06-14 21:00", "type": "نزول"},
+                {"time": "2026-06-15 00:59", "type": "نزول"}
             ]
 
 
@@ -823,7 +827,7 @@ class TradingBot:
         self.price_history: deque = deque(maxlen=1440)  # سجل الأسعار (12 ساعة × 3600 ثانية / 30 ثانية فحص)
         self.low24h_buy_count = 0       # عدد مرات الشراء عبر شرط أدنى سعر 12 ساعة
         self.max_low24h_buys = 2        # الحد الأقصى للشراء عبر هذا الشرط قبل البيع
-        self.last_low24h_buy_price = 0.0  # سعر آخر شراء عبر هذا الشرط
+        self.last_low24h_buy_price = float('inf')  # سعر آخر شراء عبر هذا الشرط (inf = أي سعر مقبول للشراء الأول)
         self.proxy_fail_count = 0       # عدد مرات فشل البروكسي
         self.max_proxy_fails = 3        # الحد الأقصى قبل إعادة الجلب
         self.last_proxy_refresh = 0     # وقت آخر تحديث للبروكسي
@@ -1094,7 +1098,7 @@ class TradingBot:
             else:
                 low_12h = self.price_engine.get_12h_low()
                 # تأكد من أن السعر أقل من آخر شراء (لمنع الشراء بنفس السعر)
-                if current_price <= low_12h * 1.001 and current_price < self.last_low24h_buy_price * 0.995:
+                if current_price <= low_12h * 1.001 and (self.last_low24h_buy_price == float('inf') or current_price < self.last_low24h_buy_price * 0.995):
                     buy_reason = "أدنى سعر 12 ساعة: %.2f | السعر الحالي: %.2f | الشراء #%d/%d" % (
                         low_12h, current_price, self.low24h_buy_count + 1, self.max_low24h_buys
                     )
@@ -1167,7 +1171,7 @@ class TradingBot:
                     ))
                     # إعادة تعيين عداد الشراء عبر أدنى سعر 12 ساعة بعد البيع
                     self.low24h_buy_count = 0
-                    self.last_low24h_buy_price = 0.0
+                    self.last_low24h_buy_price = float('inf')
                     logging.info("🔄 تم إعادة تعيين عداد أدنى سعر 12 ساعة بعد البيع")
             except Exception as e:
                 logging.error("فشل البيع: %s" % str(e))
