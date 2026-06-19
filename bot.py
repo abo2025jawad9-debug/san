@@ -63,35 +63,35 @@ class Config:
                 {"time": "2026-06-19 02:19", "type": "نزول"},
                 {"time": "2026-06-19 03:29", "type": "نزول"},
                 {"time": "2026-06-19 04:15", "type": "صعود ونزول"},
-                {"time": "2026-06-18 23:59", "type": "نزول"},
-                {"time": "2026-06-18 22:40", "type": "صعود"},
-                {"time": "2026-06-18 21:15", "type": "نزول"},
-                {"time": "2026-06-18 22:50", "type": "نزول"},
-                {"time": "2026-06-18 23:10", "type": "نزول"},
+                {"time": "2026-06-19 23:59", "type": "نزول"},
+                {"time": "2026-06-19 22:40", "type": "صعود"},
+                {"time": "2026-06-19 21:15", "type": "نزول"},
+                {"time": "2026-06-19 22:50", "type": "نزول"},
+                {"time": "2026-06-19 23:10", "type": "نزول"},
                 {"time": "2026-06-19 05:29", "type": "نزول"},
                 {"time": "2026-06-19 11:29", "type": "نزول"},
-                {"time": "2026-06-18 00:29", "type": "نزول"},
+                {"time": "2026-06-19 00:29", "type": "نزول"},
                 {"time": "2026-06-19 11:29", "type": "نزول"},
                 {"time": "2026-06-19 15:29", "type": "صعود"},
-                {"time": "2026-06-18 00:29", "type": "نزول"},
-                {"time": "2026-06-09 11:29", "type": "نزول"},
-                {"time": "2026-06-09 12:59", "type": "صعود"},
                 {"time": "2026-06-19 00:29", "type": "نزول"},
-                {"time": "2026-06-10 11:29", "type": "نزول"},
-                {"time": "2026-06-10 15:29", "type": "نزول"},
-                {"time": "2026-06-11 00:29", "type": "نزول"},
-                {"time": "2026-06-11 11:29", "type": "نزول"},
-                {"time": "2026-06-11 16:59", "type": "صعود ونزول"},
-                {"time": "2026-06-12 00:29", "type": "نزول"},
-                {"time": "2026-06-12 07:59", "type": "نزول"},
-                {"time": "2026-06-12 11:59", "type": "نزول"},
-                {"time": "2026-06-13 00:59", "type": "نزول"},
-                {"time": "2026-06-13 11:59", "type": "نزول"},
-                {"time": "2026-06-14 00:59", "type": "نزول"},
-                {"time": "2026-06-14 10:29", "type": "نزول"},
-                {"time": "2026-06-14 11:59", "type": "نزول"},
-                {"time": "2026-06-14 21:00", "type": "نزول"},
-                {"time": "2026-06-15 00:59", "type": "نزول"}
+                {"time": "2026-06-19 11:29", "type": "نزول"},
+                {"time": "2026-06-19 12:59", "type": "صعود"},
+                {"time": "2026-06-19 00:29", "type": "نزول"},
+                {"time": "2026-06-19 11:29", "type": "نزول"},
+                {"time": "2026-06-19 15:29", "type": "نزول"},
+                {"time": "2026-06-19 00:29", "type": "نزول"},
+                {"time": "2026-06-19 11:29", "type": "نزول"},
+                {"time": "2026-06-19 16:59", "type": "صعود ونزول"},
+                {"time": "2026-06-19 00:29", "type": "نزول"},
+                {"time": "2026-06-19 07:59", "type": "نزول"},
+                {"time": "2026-06-19 11:59", "type": "نزول"},
+                {"time": "2026-06-19 00:59", "type": "نزول"},
+                {"time": "2026-06-19 11:59", "type": "نزول"},
+                {"time": "2026-06-19 00:59", "type": "نزول"},
+                {"time": "2026-06-19 10:29", "type": "نزول"},
+                {"time": "2026-06-19 11:59", "type": "نزول"},
+                {"time": "2026-06-19 21:00", "type": "نزول"},
+                {"time": "2026-06-19 00:59", "type": "نزول"}
             ]
 
 
@@ -765,11 +765,9 @@ class PriceEngine:
             params = {
                 "symbol": "BTCUSDT",
                 "interval": "1h",
-                "limit": 12  # 12 شموع = 12 ساعة
+                "limit": 12
             }
-
             proxy_dict = self.proxy_manager.get_proxy_dict()
-
             async with aiohttp.ClientSession() as session:
                 if proxy_dict and proxy_dict.get("http"):
                     async with session.get(url, params=params, proxy=proxy_dict.get("http"),
@@ -777,7 +775,6 @@ class PriceEngine:
                         if resp.status == 200:
                             data = await resp.json()
                             if data and len(data) > 0:
-                                # data[i][3] = low price of each candle
                                 lows = [float(candle[3]) for candle in data]
                                 return min(lows)
                 else:
@@ -793,33 +790,32 @@ class PriceEngine:
         return float('inf')
 
     async def get_price_1h_ago(self) -> Optional[float]:
-        """جلب سعر قبل ساعة مباشرة من Binance API"""
+        """جلب سعر قبل ساعة مباشرة من Binance API (شمعة الساعة الماضية المكتملة)"""
         try:
-            # Calculate timestamp for 1 hour ago
-            one_hour_ago_ms = int((time.time() - 3600) * 1000)
+            # احسب وقت نهاية الشمعة قبل ساعة
+            now_ms = int(time.time() * 1000)
+            one_hour_ago_ms = now_ms - 3600 * 1000
 
-            # Use Binance klines API to get the candle from 1 hour ago
+            # استخدم endTime للحصول على الشمعة التي تحتوي هذا الوقت
             url = "https://testnet.binance.vision/api/v3/klines"
             params = {
                 "symbol": "BTCUSDT",
                 "interval": "1h",
-                "startTime": one_hour_ago_ms,
+                "endTime": one_hour_ago_ms,
                 "limit": 1
             }
 
             proxy_dict = self.proxy_manager.get_proxy_dict()
-
             async with aiohttp.ClientSession() as session:
                 if proxy_dict and proxy_dict.get("http"):
-                    async with session.get(url, params=params, proxy=proxy_dict.get("http"), 
+                    async with session.get(url, params=params, proxy=proxy_dict.get("http"),
                                           timeout=aiohttp.ClientTimeout(total=10), ssl=False) as resp:
                         if resp.status == 200:
                             data = await resp.json()
                             if data and len(data) > 0:
-                                # data[0][4] = close price of the candle
-                                return float(data[0][4])
+                                return float(data[0][4])  # سعر الإغلاق
                 else:
-                    async with session.get(url, params=params, 
+                    async with session.get(url, params=params,
                                           timeout=aiohttp.ClientTimeout(total=10)) as resp:
                         if resp.status == 200:
                             data = await resp.json()
@@ -829,12 +825,12 @@ class PriceEngine:
             logging.warning("فشل جلب السعر قبل ساعة من Binance: %s" % str(e))
         return None
 
-    async def is_real_drop(self, current_price: float, drop_threshold: float = 0.02) -> bool:
+    def is_real_drop(self, current_price: float, drop_threshold: float = 0.02) -> bool:
         """
         هل هذا نزول حقيقي؟
         الشرط: السعر قبل ساعة أعلى من السعر الحالي بنسبة drop_threshold
         """
-        price_1h_ago = await self.get_price_1h_ago()
+        price_1h_ago = self.get_price_1h_ago()
         if price_1h_ago is None:
             return False
         price_drop = (price_1h_ago - current_price) / price_1h_ago
@@ -1056,7 +1052,7 @@ class TradingBot:
             if state.get("price_history"):
                 self.price_engine.price_history = deque(state["price_history"], maxlen=1440)
             if state.get("hourly_prices"):
-                self.price_engine.hourly_prices = deque(state["hourly_prices"], maxlen=12)
+                self.price_engine.hourly_prices = deque(state["hourly_prices"], maxlen=60)
             self.price_engine.last_hourly_save = state.get("last_hourly_save", 0)
 
             saved_at = state.get("saved_at", "unknown")
@@ -1123,38 +1119,95 @@ class TradingBot:
             if signal["time"] == time_str and signal["time"] not in self.processed_signals:
                 if signal["type"] in ["نزول", "صعود ونزول"]:
                     # تحقق من النزول الحقيقي: السعر قبل ساعة أعلى من الحالي
-                    if await self.price_engine.is_real_drop(current_price, drop_threshold=0.01):
-                        price_1h = await self.price_engine.get_price_1h_ago() or 0
-                        drop_pct = ((price_1h - current_price) / price_1h * 100) if price_1h > 0 else 0
+                    # جلب السعر قبل ساعة مع إعادة المحاولة (3 مرات كل 10 دقائق)
+                    price_1h = None
+                    retry_count = 0
+                    max_retries = 3
+
+                    while price_1h is None and retry_count < max_retries:
+                        price_1h = await self.price_engine.get_price_1h_ago()
+                        if price_1h is None:
+                            retry_count += 1
+                            if retry_count < max_retries:
+                                logging.warning("⚠️ فشل جلب السعر قبل ساعة (محاولة %d/%d)، إعادة المحاولة بعد 10 دقائق..." % (retry_count, max_retries))
+                                await self.notifier.send(
+                                    "[SIGNAL] <b>فشل جلب السعر قبل ساعة</b>
+
+"
+                                    "<b>الوقت:</b> <code>%s</code>
+"
+                                    "<b>المحاولة:</b> <code>%d/%d</code>
+
+"
+                                    "⏳ سأعيد الفحص بعد 10 دقائق..."
+                                    % (signal["time"], retry_count, max_retries)
+                                )
+                                await asyncio.sleep(600)  # انتظر 10 دقائق
+
+                    if price_1h is None:
+                        logging.error("❌ فشل جلب السعر قبل ساعة بعد %d محاولات، تخطي إشارة %s" % (max_retries, signal["time"]))
+                        await self.notifier.send(
+                            "[SIGNAL] <b>فشل التحقق النهائي - لم يتم الشراء</b>
+
+"
+                            "<b>الوقت:</b> <code>%s</code>
+"
+                            "<b>النوع:</b> <code>%s</code>
+
+"
+                            "❌ <b>السبب:</b> فشل جلب السعر قبل ساعة من Binance بعد %d محاولات"
+                            % (signal["time"], signal["type"], max_retries)
+                        )
+                        self.processed_signals.add(signal["time"])
+                        break
+
+                    # الآن نتحقق من النزول الحقيقي
+                    price_drop = (price_1h - current_price) / price_1h
+                    drop_pct = price_drop * 100
+
+                    if price_drop >= 0.01:
                         buy_reason = "نزول حقيقي عند %s | السعر قبل ساعة: %.2f | الحالي: %.2f | النزول: %.2f%%" % (
                             signal["time"], price_1h, current_price, drop_pct
                         )
                         # إشعار بأن النزول حقيقي وتم الشراء
                         await self.notifier.send(
-                            "[SIGNAL] <b>موعد صحيح - تم الشراء</b>\n\n"
-                            "<b>الوقت:</b> <code>%s</code>\n"
-                            "<b>النوع:</b> <code>%s</code>\n"
-                            "<b>السعر قبل ساعة:</b> <code>%.2f</code>\n"
-                            "<b>السعر الحالي:</b> <code>%.2f</code>\n"
-                            "<b>نسبة النزول:</b> <code>%.2f%%</code> ✅\n\n"
+                            "[SIGNAL] <b>موعد صحيح - تم الشراء</b>
+
+"
+                            "<b>الوقت:</b> <code>%s</code>
+"
+                            "<b>النوع:</b> <code>%s</code>
+"
+                            "<b>السعر قبل ساعة:</b> <code>%.2f</code>
+"
+                            "<b>السعر الحالي:</b> <code>%.2f</code>
+"
+                            "<b>نسبة النزول:</b> <code>%.2f%%</code> ✅
+
+"
                             "🟢 <b>النتيجة:</b> نزول حقيقي - تم الشراء"
                             % (signal["time"], signal["type"], price_1h, current_price, drop_pct)
                         )
                         condition_met = True
                     else:
-                        # إشعار بأن الوقت وصل لكن لا يوجد نزول حقيقي
-                        price_1h = await self.price_engine.get_price_1h_ago() or 0
-                        drop_pct = ((price_1h - current_price) / price_1h * 100) if price_1h > 0 else 0
                         logging.info("⚠️ وقت الإشارة %s وصل لكن لا يوجد نزول حقيقي (السعر قبل ساعة: %.2f, الحالي: %.2f, النزول: %.2f%%)" % (
                             signal["time"], price_1h, current_price, drop_pct
                         ))
                         await self.notifier.send(
-                            "[SIGNAL] <b>موعد كاذب - لم يتم الشراء</b>\n\n"
-                            "<b>الوقت:</b> <code>%s</code>\n"
-                            "<b>النوع:</b> <code>%s</code>\n"
-                            "<b>السعر قبل ساعة:</b> <code>%.2f</code>\n"
-                            "<b>السعر الحالي:</b> <code>%.2f</code>\n"
-                            "<b>نسبة النزول:</b> <code>%.2f%%</code> (مطلوب: 1%%+)\n\n"
+                            "[SIGNAL] <b>موعد كاذب - لم يتم الشراء</b>
+
+"
+                            "<b>الوقت:</b> <code>%s</code>
+"
+                            "<b>النوع:</b> <code>%s</code>
+"
+                            "<b>السعر قبل ساعة:</b> <code>%.2f</code>
+"
+                            "<b>السعر الحالي:</b> <code>%.2f</code>
+"
+                            "<b>نسبة النزول:</b> <code>%.2f%%</code> (مطلوب: 1%%+)
+
+"
                             "❌ <b>السبب:</b> النزول غير حقيقي - لم يتم الشراء"
                             % (signal["time"], signal["type"], price_1h, current_price, drop_pct)
                         )
