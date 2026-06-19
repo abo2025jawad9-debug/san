@@ -790,13 +790,10 @@ class PriceEngine:
         return float('inf')
 
     async def get_price_1h_ago(self) -> Optional[float]:
-        """جلب سعر قبل ساعة مباشرة من Binance API (شمعة الساعة الماضية المكتملة)"""
+        """جلب سعر قبل ساعة مباشرة من Binance API"""
         try:
-            # احسب وقت نهاية الشمعة قبل ساعة
             now_ms = int(time.time() * 1000)
             one_hour_ago_ms = now_ms - 3600 * 1000
-
-            # استخدم endTime للحصول على الشمعة التي تحتوي هذا الوقت
             url = "https://testnet.binance.vision/api/v3/klines"
             params = {
                 "symbol": "BTCUSDT",
@@ -804,7 +801,6 @@ class PriceEngine:
                 "endTime": one_hour_ago_ms,
                 "limit": 1
             }
-
             proxy_dict = self.proxy_manager.get_proxy_dict()
             async with aiohttp.ClientSession() as session:
                 if proxy_dict and proxy_dict.get("http"):
@@ -813,7 +809,7 @@ class PriceEngine:
                         if resp.status == 200:
                             data = await resp.json()
                             if data and len(data) > 0:
-                                return float(data[0][4])  # سعر الإغلاق
+                                return float(data[0][4])
                 else:
                     async with session.get(url, params=params,
                                           timeout=aiohttp.ClientTimeout(total=10)) as resp:
@@ -825,15 +821,15 @@ class PriceEngine:
             logging.warning("فشل جلب السعر قبل ساعة من Binance: %s" % str(e))
         return None
 
-    def is_real_drop(self, current_price: float, drop_threshold: float = 0.02) -> bool:
+    async def is_real_drop(self, current_price: float, drop_threshold: float = 0.02) -> bool:
         """
         هل هذا نزول حقيقي؟
         الشرط: السعر قبل ساعة أعلى من السعر الحالي بنسبة drop_threshold
         """
-        price_1h_ago = self.get_price_1h_ago()
-        if price_1h_ago is None:
+        price_1h = await self.get_price_1h_ago()
+        if price_1h is None:
             return False
-        price_drop = (price_1h_ago - current_price) / price_1h_ago
+        price_drop = (price_1h - current_price) / price_1h
         return price_drop >= drop_threshold
 
     async def get_price(self) -> Dict:
@@ -1130,87 +1126,29 @@ class TradingBot:
                             retry_count += 1
                             if retry_count < max_retries:
                                 logging.warning("⚠️ فشل جلب السعر قبل ساعة (محاولة %d/%d)، إعادة المحاولة بعد 10 دقائق..." % (retry_count, max_retries))
-                                await self.notifier.send(
-                                    "[SIGNAL] <b>فشل جلب السعر قبل ساعة</b>
-
-"
-                                    "<b>الوقت:</b> <code>%s</code>
-"
-                                    "<b>المحاولة:</b> <code>%d/%d</code>
-
-"
-                                    "⏳ سأعيد الفحص بعد 10 دقائق..."
-                                    % (signal["time"], retry_count, max_retries)
-                                )
-                                await asyncio.sleep(600)  # انتظر 10 دقائق
+                                msg = "[SIGNAL] <b>فشل جلب السعر قبل ساعة</b>\n\n<b>الوقت:</b> <code>%s</code>\n<b>المحاولة:</b> <code>%d/%d</code>\n\n⏳ سأعيد الفحص بعد 10 دقائق..." % (signal["time"], retry_count, max_retries)
+                                await self.notifier.send(msg)
+                                await asyncio.sleep(600)
 
                     if price_1h is None:
                         logging.error("❌ فشل جلب السعر قبل ساعة بعد %d محاولات، تخطي إشارة %s" % (max_retries, signal["time"]))
-                        await self.notifier.send(
-                            "[SIGNAL] <b>فشل التحقق النهائي - لم يتم الشراء</b>
-
-"
-                            "<b>الوقت:</b> <code>%s</code>
-"
-                            "<b>النوع:</b> <code>%s</code>
-
-"
-                            "❌ <b>السبب:</b> فشل جلب السعر قبل ساعة من Binance بعد %d محاولات"
-                            % (signal["time"], signal["type"], max_retries)
-                        )
+                        msg = "[SIGNAL] <b>فشل التحقق النهائي - لم يتم الشراء</b>\n\n<b>الوقت:</b> <code>%s</code>\n<b>النوع:</b> <code>%s</code>\n\n❌ <b>السبب:</b> فشل جلب السعر قبل ساعة من Binance بعد %d محاولات" % (signal["time"], signal["type"], max_retries)
+                        await self.notifier.send(msg)
                         self.processed_signals.add(signal["time"])
                         break
 
-                    # الآن نتحقق من النزول الحقيقي
                     price_drop = (price_1h - current_price) / price_1h
                     drop_pct = price_drop * 100
 
                     if price_drop >= 0.01:
-                        buy_reason = "نزول حقيقي عند %s | السعر قبل ساعة: %.2f | الحالي: %.2f | النزول: %.2f%%" % (
-                            signal["time"], price_1h, current_price, drop_pct
-                        )
-                        # إشعار بأن النزول حقيقي وتم الشراء
-                        await self.notifier.send(
-                            "[SIGNAL] <b>موعد صحيح - تم الشراء</b>
-
-"
-                            "<b>الوقت:</b> <code>%s</code>
-"
-                            "<b>النوع:</b> <code>%s</code>
-"
-                            "<b>السعر قبل ساعة:</b> <code>%.2f</code>
-"
-                            "<b>السعر الحالي:</b> <code>%.2f</code>
-"
-                            "<b>نسبة النزول:</b> <code>%.2f%%</code> ✅
-
-"
-                            "🟢 <b>النتيجة:</b> نزول حقيقي - تم الشراء"
-                            % (signal["time"], signal["type"], price_1h, current_price, drop_pct)
-                        )
+                        buy_reason = "نزول حقيقي عند %s | السعر قبل ساعة: %.2f | الحالي: %.2f | النزول: %.2f%%" % (signal["time"], price_1h, current_price, drop_pct)
+                        msg = "[SIGNAL] <b>موعد صحيح - تم الشراء</b>\n\n<b>الوقت:</b> <code>%s</code>\n<b>النوع:</b> <code>%s</code>\n<b>السعر قبل ساعة:</b> <code>%.2f</code>\n<b>السعر الحالي:</b> <code>%.2f</code>\n<b>نسبة النزول:</b> <code>%.2f%%</code> ✅\n\n🟢 <b>النتيجة:</b> نزول حقيقي - تم الشراء" % (signal["time"], signal["type"], price_1h, current_price, drop_pct)
+                        await self.notifier.send(msg)
                         condition_met = True
                     else:
-                        logging.info("⚠️ وقت الإشارة %s وصل لكن لا يوجد نزول حقيقي (السعر قبل ساعة: %.2f, الحالي: %.2f, النزول: %.2f%%)" % (
-                            signal["time"], price_1h, current_price, drop_pct
-                        ))
-                        await self.notifier.send(
-                            "[SIGNAL] <b>موعد كاذب - لم يتم الشراء</b>
-
-"
-                            "<b>الوقت:</b> <code>%s</code>
-"
-                            "<b>النوع:</b> <code>%s</code>
-"
-                            "<b>السعر قبل ساعة:</b> <code>%.2f</code>
-"
-                            "<b>السعر الحالي:</b> <code>%.2f</code>
-"
-                            "<b>نسبة النزول:</b> <code>%.2f%%</code> (مطلوب: 1%%+)
-
-"
-                            "❌ <b>السبب:</b> النزول غير حقيقي - لم يتم الشراء"
-                            % (signal["time"], signal["type"], price_1h, current_price, drop_pct)
-                        )
+                        logging.info("⚠️ وقت الإشارة %s وصل لكن لا يوجد نزول حقيقي (السعر قبل ساعة: %.2f, الحالي: %.2f, النزول: %.2f%%)" % (signal["time"], price_1h, current_price, drop_pct))
+                        msg = "[SIGNAL] <b>موعد كاذب - لم يتم الشراء</b>\n\n<b>الوقت:</b> <code>%s</code>\n<b>النوع:</b> <code>%s</code>\n<b>السعر قبل ساعة:</b> <code>%.2f</code>\n<b>السعر الحالي:</b> <code>%.2f</code>\n<b>نسبة النزول:</b> <code>%.2f%%</code> (مطلوب: 1%%+)\n\n❌ <b>السبب:</b> النزول غير حقيقي - لم يتم الشراء" % (signal["time"], signal["type"], price_1h, current_price, drop_pct)
+                        await self.notifier.send(msg)
                     self.processed_signals.add(signal["time"])
                     break
 
