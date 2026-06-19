@@ -759,35 +759,46 @@ class PriceEngine:
             self.last_hourly_save = now
 
     async def get_12h_low(self) -> float:
-        """جلب أدنى سعر في 12 ساعة مباشرة من Binance API"""
+        """جلب أدنى سعر في 12 ساعة - مع Cache لتقليل الاستدعاءات"""
+        # التحقق من Cache (صالح لمدة 5 دقائق)
+        cache_age = time.time() - getattr(self, '_low12h_cache_time', 0)
+        if cache_age < 300 and hasattr(self, '_low12h_cached_value'):
+            return self._low12h_cached_value
+
+        result = float('inf')
         try:
+            # محاولة 1: Binance API
             url = "https://testnet.binance.vision/api/v3/klines"
-            params = {
-                "symbol": "BTCUSDT",
-                "interval": "1h",
-                "limit": 12
-            }
+            params = {"symbol": "BTCUSDT", "interval": "1h", "limit": 12}
             proxy_dict = self.proxy_manager.get_proxy_dict()
             async with aiohttp.ClientSession() as session:
                 if proxy_dict and proxy_dict.get("http"):
                     async with session.get(url, params=params, proxy=proxy_dict.get("http"),
-                                          timeout=aiohttp.ClientTimeout(total=10), ssl=False) as resp:
+                                          timeout=aiohttp.ClientTimeout(total=8), ssl=False) as resp:
                         if resp.status == 200:
                             data = await resp.json()
                             if data and len(data) > 0:
                                 lows = [float(candle[3]) for candle in data]
-                                return min(lows)
+                                result = min(lows)
                 else:
                     async with session.get(url, params=params,
-                                          timeout=aiohttp.ClientTimeout(total=10)) as resp:
+                                          timeout=aiohttp.ClientTimeout(total=8)) as resp:
                         if resp.status == 200:
                             data = await resp.json()
                             if data and len(data) > 0:
                                 lows = [float(candle[3]) for candle in data]
-                                return min(lows)
+                                result = min(lows)
         except Exception as e:
-            logging.warning("فشل جلب أدنى سعر 12 ساعة من Binance: %s" % str(e))
-        return float('inf')
+            # سجل الخطأ مرة واحدة فقط كل 10 دقائق لتقليل الضوضاء
+            last_error_time = getattr(self, '_low12h_last_error', 0)
+            if time.time() - last_error_time > 600:
+                logging.warning("فشل جلب أدنى سعر 12 ساعة من Binance: %s (سأستخدم القيمة المخزنة)" % str(e))
+                self._low12h_last_error = time.time()
+
+        # حفظ في Cache
+        self._low12h_cached_value = result
+        self._low12h_cache_time = time.time()
+        return result
 
     async def get_price_1h_ago(self) -> Optional[float]:
         """جلب سعر قبل ساعة مباشرة من Binance API"""
