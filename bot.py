@@ -36,8 +36,8 @@ class Config:
     min_btc_amount: float = 0.0001
     fee_rate: float = 0.001
 
-    min_profit_usdt: float = 0.10  # $0.10 minimum profit (after fees, keeps ~$0.08)
-    min_profit_pct: float = 0.5
+    min_profit_usdt: float =  0.05  # $0.10 minimum profit (after fees, keeps ~$0.08)
+    min_profit_pct: float =  0.2
     profit_targets: List[float] = None
 
     cooldown_seconds: int = 300
@@ -55,7 +55,7 @@ class Config:
 
     def __post_init__(self):
         if self.profit_targets is None:
-            self.profit_targets = [0.8, 1.5, 3.0, 5.0]  # Realistic targets for $10 trades
+            self.profit_targets =  [0.3, 0.8, 1.5, 3.0]   # Realistic targets for $10 trades
 
         if self.schedule is None:
             self.schedule = [
