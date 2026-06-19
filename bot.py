@@ -17,7 +17,9 @@ from collections import deque
 import uuid
 import re
 
-STATE_FILE = "bot_state.json"
+
+STATE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "bot_state.json")
+
 
 # ==========================================
 # CONFIGURATION
