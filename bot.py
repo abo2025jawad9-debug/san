@@ -1,14 +1,13 @@
 import asyncio
 import os
 import random
-import time
-import cloudscraper
+import requests
 from bs4 import BeautifulSoup
 
 # ==========================================
-# 1. إعدادات الروابط والمصفوفات الأساسية
+# 1. الإعدادات
 # ==========================================
-YEMEN_PREFIXES = ["77", "78", "72", "73"]
+YEMEN_PREFIXES = ["77", "78", "73", "71", "70"]  # حسب التحقق في الموقع
 GOVERNORATES = [str(i) for i in range(1, 23)]
 
 ROUND_OF_16_TEAMS = {
@@ -37,25 +36,11 @@ HEADERS = {
     "Accept-Language": "ar,en-US;q=0.9,en;q=0.8",
     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
     "Accept-Encoding": "gzip, deflate, br",
-    "DNT": "1",
-    "Connection": "keep-alive",
-    "Upgrade-Insecure-Requests": "1",
-    "Content-Type": "application/x-www-form-urlencoded",
+    "Origin": "https://quwatasad.com",
 }
 
 # ==========================================
-# 2. إنشاء cloudscraper (جلسة واحدة تحتفظ بالكوكيز)
-# ==========================================
-scraper = cloudscraper.create_scraper(
-    browser={
-        'browser': 'chrome',
-        'platform': 'windows',
-        'desktop': True
-    }
-)
-
-# ==========================================
-# 3. مصفوفات التمويه
+# 2. التمويه
 # ==========================================
 INVISIBLE_CHARS = ["\u064C", "\u064C"]
 
@@ -65,7 +50,7 @@ ARABIC_DIACRITICS = [
 ]
 
 # ==========================================
-# 4. دوال قراءة الملفات وهندسة النصوص
+# 3. قراءة الأسماء
 # ==========================================
 def load_names_from_file(filename="names.txt"):
     if os.path.exists(filename):
@@ -76,10 +61,10 @@ def load_names_from_file(filename="names.txt"):
                 return names
     print(f"[⚠] تنبيه: ملف {filename} غير موجود! سيتم استخدام أسماء افتراضية.")
     return [
-        "محمد لطف يحيئ 772490746",
         "محمد لطف يحيى 772490746",
-        "محمد لطف الزيلعي 772490746",
-        "مجمد لطف الزيلعي 772490746",
+        "أحمد سعيد علي 771234567",
+        "خالد محمود سالم 773456789",
+        "عبدالله فؤاد عمر 774567890",
     ]
 
 def make_name_strictly_unique(name):
@@ -109,22 +94,17 @@ def generate_random_phone():
     return f"{prefix}{suffix}"
 
 # ==========================================
-# 5. جلب الحقول المخفية (للطلب الواحد)
+# 4. جلب الحقول (GET + POST بنفس الجلسة)
 # ==========================================
-async def fetch_live_form_data():
+def fetch_live_form_data(session):
     print("[⌛] جاري جلب التوكن والحقول المخفية...")
-    loop = asyncio.get_event_loop()
     try:
-        def fetch():
-            return scraper.get(FORM_PAGE_URL, headers=HEADERS, timeout=15)
-        
-        response = await asyncio.wait_for(loop.run_in_executor(None, fetch), timeout=20)
-        
-        if response.status_code != 200:
-            print(f"[✘] فشل جلب الصفحة. كود: {response.status_code}")
+        resp = session.get(FORM_PAGE_URL, headers=HEADERS, timeout=15)
+        if resp.status_code != 200:
+            print(f"[✘] فشل جلب الصفحة. كود: {resp.status_code}")
             return None
 
-        soup = BeautifulSoup(response.text, "html.parser")
+        soup = BeautifulSoup(resp.text, "html.parser")
 
         token_input = soup.find("input", {"name": "_token"})
         topic_id_input = soup.find("input", {"name": "TopicID"})
@@ -140,14 +120,14 @@ async def fetch_live_form_data():
             "WebmasterSectionId": webmaster_id_input.get("value", "") if webmaster_id_input else "",
         }
 
-        print(f"[✔] تم جلب البيانات: _token={live_fields['_token'][:20]}...")
+        print(f"[✔] تم جلب التوكن: {live_fields['_token'][:25]}...")
         return live_fields
     except Exception as e:
         print(f"[✘] خطأ في جلب البيانات: {str(e)}")
         return None
 
 # ==========================================
-# 6. تجهيز الحزمة
+# 5. تجهيز الحزمة
 # ==========================================
 def prepare_payload(live_fields, names_list):
     raw_name = random.choice(names_list)
@@ -165,53 +145,71 @@ def prepare_payload(live_fields, names_list):
     return payload, team_name
 
 def check_submission_success(status, html_text):
-    success_keywords = ["شكرا", "تم بنجاح", "success", "thank", "تم الإرسال"]
-    is_success_word = any(kw in html_text.lower() for kw in success_keywords)
-    return (status == 200 and is_success_word) or is_success_word
-
-# ==========================================
-# 7. إرسال طلب واحد (مع جلب توكن جديد لكل طلب)
-# ==========================================
-async def send_single_request(request_num, names_list):
-    # 1. جلب صفحة النموذج أولاً للحصول على توكن + كوكيز جديدة
-    live_fields = await fetch_live_form_data()
-    if not live_fields:
-        print(f"[✘] الطلب {request_num:02d} فشل: لم يتم جلب التوكن")
-        return
-
-    payload, team_name = prepare_payload(live_fields, names_list)
+    if status != 200:
+        return False, f"كود: {status}"
     
-    loop = asyncio.get_event_loop()
-    try:
-        def post_data():
-            return scraper.post(TARGET_URL, data=payload, headers=HEADERS, timeout=15)
-        
-        response = await asyncio.wait_for(loop.run_in_executor(None, post_data), timeout=20)
-        
-        status = response.status_code
-        html_text = response.text
-
-        if check_submission_success(status, html_text):
-            print(f"[🏆 نجاح] الطلب {request_num:02d} | المنتخب: {team_name} ({payload['customField_18']})")
-        else:
-            # طباعة جزء من الرد لفهم سبب الخطأ
-            snippet = html_text[:200].replace('\n', ' ')
-            print(f"[⚠ رفض] الطلب {request_num:02d} | كود: {status} | الرد: {snippet}...")
-            
-    except Exception as e:
-        print(f"[✘ خطأ] الطلب {request_num:02d} فشل: {str(e)}")
+    # البحث عن رسائل النجاح في الرد
+    success_keywords = ["شكرا", "تم بنجاح", "success", "thank", "تم الإرسال", "تم التسجيل"]
+    html_lower = html_text.lower()
+    is_success = any(kw in html_lower for kw in success_keywords)
+    
+    # إذا كان الرد نفسه صفحة النموذج بدون رسالة خطأ، نعتبره نجاحًا تقريبيًا
+    error_keywords = ["error", "خطأ", "فشل", "invalid", "مطلوب", "required"]
+    has_error = any(kw in html_lower for kw in error_keywords)
+    
+    if is_success and not has_error:
+        return True, "تمت العملية بنجاح"
+    elif not has_error:
+        return True, "تم الإرسال (200 OK)"
+    else:
+        return False, "يوجد خطأ في الرد"
 
 # ==========================================
-# 8. إدارة التزامن (5 طلبات كحد أقصى في نفس الوقت)
+# 6. إرسال طلب واحد
 # ==========================================
-async def send_request(request_num, names_list, semaphore):
+async def send_single_request(request_num, names_list, semaphore):
     async with semaphore:
-        await send_single_request(request_num, names_list)
-        # تأخير عشوائي بين الطلبات (0.5 إلى 2.5 ثانية)
-        await asyncio.sleep(random.uniform(0.5, 2.5))
+        # جلسة جديدة لكل طلب (للحفاظ على كوكيز GET→POST)
+        session = requests.Session()
+        
+        # 1. جلب التوكن أولاً
+        live_fields = await asyncio.get_event_loop().run_in_executor(
+            None, lambda: fetch_live_form_data(session)
+        )
+        if not live_fields:
+            print(f"[✘] الطلب {request_num:02d} فشل: لم يتم جلب التوكن")
+            return
+
+        payload, team_name = prepare_payload(live_fields, names_list)
+        
+        try:
+            # 2. إرسال POST بنفس الجلسة (تحتفظ بالكوكيز)
+            def do_post():
+                return session.post(TARGET_URL, data=payload, headers=HEADERS, timeout=15, allow_redirects=True)
+            
+            resp = await asyncio.wait_for(
+                asyncio.get_event_loop().run_in_executor(None, do_post),
+                timeout=20
+            )
+            
+            status = resp.status_code
+            html_text = resp.text
+
+            is_success, message = check_submission_success(status, html_text)
+
+            if is_success:
+                print(f"[🏆 نجاح] الطلب {request_num:02d} | المنتخب: {team_name} ({payload['customField_18']}) | {message}")
+            else:
+                snippet = html_text[:150].replace('\n', ' ')
+                print(f"[⚠ رفض] الطلب {request_num:02d} | كود: {status} | {message} | {snippet}...")
+                
+        except Exception as e:
+            print(f"[✘ خطأ] الطلب {request_num:02d} فشل: {str(e)}")
+        finally:
+            session.close()
 
 # ==========================================
-# 9. نقطة الانطلاق
+# 7. نقطة الانطلاق
 # ==========================================
 async def main():
     print("==================================================")
@@ -224,7 +222,7 @@ async def main():
 
     names_list = load_names_from_file("names.txt")
 
-    # 🔒 Semaphore: 5 طلبات متزامنة كحد أقصى
+    # 🔒 5 طلبات متزامنة كحد أقصى
     semaphore = asyncio.Semaphore(5)
 
     for round_num in range(1, 7):
@@ -233,7 +231,7 @@ async def main():
         print(f"{'='*50}")
 
         tasks = [
-            send_request(i, names_list, semaphore)
+            send_single_request(i, names_list, semaphore)
             for i in range(1, 100)
         ]
         await asyncio.gather(*tasks)
@@ -249,3 +247,4 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
+
