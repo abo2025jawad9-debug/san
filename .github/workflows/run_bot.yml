@@ -1,35 +1,35 @@
+name: Auto Run Bot Every 4 Hours
 
-name: Bot Automation # هذا مجرد عنوان للمهمة في قيتهاب
-
+# تحديد متى يعمل السكربت
 on:
   schedule:
-    # يعمل عند الدقيقة 0 من كل 6 ساعات
-    - cron: '0 */6 * * *'
-  workflow_dispatch: # زر للتشغيل اليدوي
-
-permissions:
-  contents: write # صلاحية ضرورية لرفع ملف sh.json
+    # صيغة Cron لتشغيل السكربت كل 4 ساعات (عند الدقيقة 0)
+    - cron: '0 */4 * * *'
+  
+  # هذا الخيار يتيح لك تشغيل السكربت يدوياً بضغطة زر من واجهة GitHub
+  workflow_dispatch:
 
 jobs:
-  run-bot:
+  run-bot-job:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
+    # الخطوة 1: استنساخ ملفات المستودع إلى بيئة التشغيل
+    - name: Checkout Repository
+      uses: actions/checkout@v4
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.10'
+    # الخطوة 2: تثبيت بيئة بايثون
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11' # يمكنك تغييره حسب إصدار بايثون الذي تستخدمه
 
-      - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
+    # الخطوة 3: تثبيت المكتبات الخارجية المطلوبة
+    - name: Install Dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
 
-      - name: Run Trading Bot
-        # هنا يتم تشغيل ملفك الذي اسمه bot.py
-        run: python bot.py
+    # الخطوة 4: تشغيل السكربت الخاص بك
+    - name: Execute Bot
+      run: python bot.py
