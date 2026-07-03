@@ -31,24 +31,27 @@ USER_AGENTS = [
 ]
 
 INVISIBLE_CHARS = ["\u064C", "\u064C"]
-ARABIC_DIACRITICS = ["\u064E", "\u064F", "\u0650", "\u064F", "\u064C", "\u064D", "\u0651", "\u0651", "\u0640", "\u0653"]
+ARABIC_DIACRITICS = [
+    "\u064E", "\u064F", "\u0650", "\u064F", "\u064C", 
+    "\u064D", "\u0651", "\u0651", "\u0640", "\u0653"
+]
 
 # ==========================================
-# 2. جلب البروكسيات المجانية
+# 2. جلب البروكسيات (30 فقط + سريع)
 # ==========================================
-def fetch_free_proxies(max_proxies=100):
-    """جلب بروكسيات مجانية من مصادر متعددة"""
+def fetch_free_proxies(max_proxies=30):
+    """جلب بروكسيات مجانية - سريع ومحدود"""
     proxies = []
     sources = [
         "https://api.proxyscrape.com/v4/free-proxy-list/get?request=display_proxies&proxy_format=protocolipport&format=text&protocol=http",
-        "https://api.proxyscrape.com/v4/free-proxy-list/get?request=display_proxies&proxy_format=protocolipport&format=text&protocol=https",
     ]
-
+    
     headers = {"User-Agent": random.choice(USER_AGENTS)}
-
+    
     for url in sources:
         try:
-            resp = requests.get(url, headers=headers, timeout=15)
+            print(f"[🌐] جلب البروكسيات من المصدر...")
+            resp = requests.get(url, headers=headers, timeout=10)
             if resp.status_code == 200:
                 lines = [line.strip() for line in resp.text.strip().split("\n") if line.strip()]
                 for line in lines:
@@ -56,50 +59,65 @@ def fetch_free_proxies(max_proxies=100):
                         proxies.append(line)
                     elif ":" in line and not line.startswith("http"):
                         proxies.append(f"http://{line}")
-                print(f"[✔] تم جلب {len(lines)} بروكسي من المصدر")
+                print(f"[✔] تم جلب {len(lines)} بروكسي")
         except Exception as e:
             print(f"[✘] فشل جلب البروكسيات: {e}")
-
+    
     proxies = list(dict.fromkeys(proxies))
     random.shuffle(proxies)
-    print(f"[📊] إجمالي البروكسيات الفريدة: {len(proxies)}")
+    print(f"[📊] إجمالي فريد: {len(proxies)} | نختبر أول {max_proxies}")
     return proxies[:max_proxies]
 
 # ==========================================
-# 3. اختبار البروكسيات
+# 3. اختبار سريع (timeout 4 ثوانٍ فقط)
 # ==========================================
 def test_single_proxy(proxy_url):
-    """اختبار بروكسي واحد"""
+    """اختبار سريع - 4 ثوانٍ كحد أقصى"""
     proxies = {"http": proxy_url, "https": proxy_url}
     headers = {"User-Agent": random.choice(USER_AGENTS)}
-
+    
     try:
         start = time.time()
-        resp = requests.get(FORM_PAGE_URL, headers=headers, proxies=proxies, timeout=10, allow_redirects=True)
+        resp = requests.get(
+            FORM_PAGE_URL,
+            headers=headers,
+            proxies=proxies,
+            timeout=4,  # ⬅️ سريع!
+            allow_redirects=True
+        )
         latency = time.time() - start
-
+        
         if resp.status_code == 200 and len(resp.text) > 1000:
             return (proxy_url, latency, True)
     except Exception:
         pass
-
+    
     return (proxy_url, 999, False)
 
-def test_proxies(proxy_list, max_workers=50):
-    """اختبار جميع البروكسيات وإرجاع العاملة مرتبة"""
+def test_proxies_quick(proxy_list, max_workers=30, min_working=5):
+    """اختبار سريع - نتوقف عند أول 5 ناجحين"""
     working = []
-    print(f"[🔬] بدء اختبار {len(proxy_list)} بروكسي (قد يستغرق 30-60 ثانية)...")
-
+    print(f"[🔬] اختبار {len(proxy_list)} بروكسي (نستهدف {min_working} ناجحين)...")
+    
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         futures = {executor.submit(test_single_proxy, p): p for p in proxy_list}
+        
         for future in as_completed(futures):
             proxy, latency, is_working = future.result()
+            
             if is_working:
                 working.append((proxy, latency))
-                print(f"[✔] عامل #{len(working)}: {proxy[:45]} | {latency:.2f}s")
-
+                print(f"[✔] عامل #{len(working)}: {proxy[:40]} | {latency:.2f}s")
+                
+                # ⬅️ نتوقف فوراً عند الوصول للحد الأدنى
+                if len(working) >= min_working:
+                    # إلغاء باقي المهام
+                    for f in futures:
+                        f.cancel()
+                    break
+    
     working.sort(key=lambda x: x[1])
-    print(f"[✅] اكتمل: {len(working)} بروكسي عامل من أصل {len(proxy_list)}")
+    print(f"[✅] اكتمل: {len(working)} بروكسي عامل")
     return [p[0] for p in working]
 
 # ==========================================
@@ -110,15 +128,19 @@ def load_names_from_file(filename="names.txt"):
         with open(filename, "r", encoding="utf-8") as f:
             names = [line.strip() for line in f if line.strip()]
             if names:
+                print(f"[✔] تم تحميل {len(names)} اسم")
                 return names
+    print(f"[⚠] ملف {filename} غير موجود! استخدام افتراضية.")
     return ["محمد لطف يحيى 772490746", "أحمد سعيد علي 771234567", "خالد محمود سالم 773456789"]
 
 def make_name_strictly_unique(name):
     hidden_prob = random.uniform(0.40, 0.80)
     diacritic_prob = random.uniform(0.20, 0.50)
     unique_name = ""
+    
     if random.random() < 0.5:
         unique_name += "".join(random.choices(INVISIBLE_CHARS, k=random.randint(1, 2)))
+
     for char in name:
         unique_name += char
         if char != " ":
@@ -128,17 +150,20 @@ def make_name_strictly_unique(name):
                 unique_name += random.choice(ARABIC_DIACRITICS)
                 if random.random() < 0.20:
                     unique_name += random.choice(ARABIC_DIACRITICS)
+
     return f"{unique_name}{' ' * random.randint(0, 3)}"
 
 def generate_random_phone():
-    return f"{random.choice(YEMEN_PREFIXES)}{''.join([str(random.randint(0,9)) for _ in range(7)])}"
+    prefix = random.choice(YEMEN_PREFIXES)
+    suffix = "".join([str(random.randint(0, 9)) for _ in range(7)])
+    return f"{prefix}{suffix}"
 
 # ==========================================
 # 5. جلب التوكن + إرسال الطلب
 # ==========================================
 def fetch_form_data(session, proxies, headers):
     try:
-        resp = session.get(FORM_PAGE_URL, headers=headers, proxies=proxies, timeout=15)
+        resp = session.get(FORM_PAGE_URL, headers=headers, proxies=proxies, timeout=8)
         if resp.status_code != 200:
             return None
         soup = BeautifulSoup(resp.text, "html.parser")
@@ -169,19 +194,18 @@ def prepare_payload(live_fields, names_list):
 def check_success(status, html_text):
     if status != 200:
         return False
-    keywords = ["شكرا", "تم بنجاح", "success", "thank", "تم الإرسال"]
+    keywords = ["شكرا", "تم بنجاح", "success", "thank", "تم الإرسال", "تم التسجيل"]
     return any(kw in html_text.lower() for kw in keywords)
 
 # ==========================================
-# 6. إرسال طلب مع تجربة بروكسيات متعددة
+# 6. إرسال طلب مع بروكسي (تجربة متعددة)
 # ==========================================
 async def send_single_request(request_num, names_list, working_proxies, semaphore):
     async with semaphore:
-        # نختار بروكسي عشوائي من العاملة
-        proxy_candidates = working_proxies.copy()
-        random.shuffle(proxy_candidates)
-
-        for attempt, proxy_url in enumerate(proxy_candidates[:5]):  # نجرب 5 بروكسيات كحد أقصى
+        # نختار 3 بروكسيات عشوائية للتجربة
+        candidates = random.sample(working_proxies, min(3, len(working_proxies)))
+        
+        for proxy_url in candidates:
             session = requests.Session()
             headers = {
                 "User-Agent": random.choice(USER_AGENTS),
@@ -192,94 +216,94 @@ async def send_single_request(request_num, names_list, working_proxies, semaphor
                 "Origin": "https://quwatasad.com",
             }
             proxies = {"http": proxy_url, "https": proxy_url}
-
+            
             try:
                 # GET
                 def do_get():
                     return fetch_form_data(session, proxies, headers)
-
+                
                 live_fields = await asyncio.wait_for(
-                    asyncio.get_event_loop().run_in_executor(None, do_get), timeout=20
+                    asyncio.get_event_loop().run_in_executor(None, do_get),
+                    timeout=15
                 )
-
+                
                 if not live_fields:
                     continue
-
+                
                 payload, team_name = prepare_payload(live_fields, names_list)
-
+                
                 # POST
                 def do_post():
-                    return session.post(TARGET_URL, data=payload, headers=headers, proxies=proxies, timeout=15, allow_redirects=True)
-
+                    return session.post(TARGET_URL, data=payload, headers=headers, proxies=proxies, timeout=10, allow_redirects=True)
+                
                 resp = await asyncio.wait_for(
-                    asyncio.get_event_loop().run_in_executor(None, do_post), timeout=20
+                    asyncio.get_event_loop().run_in_executor(None, do_post),
+                    timeout=15
                 )
-
+                
                 if check_success(resp.status_code, resp.text):
-                    print(f"[🏆 نجاح] الطلب {request_num:02d} | المنتخب: {team_name} | البروكسي: {proxy_url[:35]}...")
+                    print(f"[🏆 نجاح] الطلب {request_num:02d} | {team_name} | {proxy_url[:30]}...")
                     session.close()
                     return True
                 else:
-                    # البروكسي يعمل لكن الموقع رفض البيانات
                     session.close()
                     return False
-
-            except Exception as e:
+                    
+            except Exception:
                 session.close()
-                if attempt < 4:
-                    continue
-                else:
-                    print(f"[✘] الطلب {request_num:02d} فشل بعد 5 محاولات")
-                    return False
-
+                continue
+        
+        print(f"[✘] الطلب {request_num:02d} فشل بعد {len(candidates)} محاولات")
         return False
 
 # ==========================================
 # 7. التشغيل الرئيسي
 # ==========================================
 async def main():
-    print("=" * 60)
-    print("--- سكربت قوة أسد - جلب بروكسيات مجانية تلقائيًا ---")
-    print("=" * 60)
-
+    print("=" * 55)
+    print("--- سكربت قوة أسد - إصدار سريع ---")
+    print("=" * 55)
+    
     names_list = load_names_from_file("names.txt")
-
+    
     for round_num in range(1, 7):
         print(f"\n{'='*50}")
         print(f"--- الدورة {round_num} من 6 ---")
         print(f"{'='*50}")
-
-        # جلب البروكسيات
-        print("[🌐] جلب بروكسيات مجانية...")
-        raw_proxies = fetch_free_proxies(max_proxies=100)
-
+        
+        # 1. جلب البروكسيات (30 فقط)
+        print("[⏱️] جلب البروكسيات...")
+        raw_proxies = fetch_free_proxies(max_proxies=30)
+        
         if not raw_proxies:
             print("[✘] لم يتم جلب أي بروكسي!")
             return
-
-        # اختبار البروكسيات
-        working_proxies = test_proxies(raw_proxies, max_workers=50)
-
+        
+        # 2. اختبار سريع (نستهدف 5 ناجحين فقط)
+        print("[⏱️] اختبار البروكسيات (سريع)...")
+        working_proxies = test_proxies_quick(raw_proxies, max_workers=30, min_working=5)
+        
         if not working_proxies:
             print("[✘] لا يوجد بروكسي عامل!")
             return
-
-        # تشغيل الطلبات
+        
+        # 3. تشغيل الطلبات
+        print("[⏱️] بدء إرسال الطلبات...")
         semaphore = asyncio.Semaphore(5)
-        tasks = [send_single_request(i, names_list, working_proxies, semaphore) for i in range(1, 10)]
+        tasks = [send_single_request(i, names_list, working_proxies, semaphore) for i in range(1, 100)]
         results = await asyncio.gather(*tasks, return_exceptions=True)
-
+        
         success = sum(1 for r in results if r is True)
         print(f"[📊] الدورة {round_num}: نجاح={success}/99")
-
+        
         if round_num < 6:
             wait_time = random.randint(5, 15)
             print(f"\n[⏳] انتظار {wait_time} ثوانٍ...")
             await asyncio.sleep(wait_time)
-
-    print("\n" + "=" * 60)
+    
+    print("\n" + "=" * 55)
     print("--- تم الانتهاء ---")
-    print("=" * 60)
+    print("=" * 55)
 
 if __name__ == "__main__":
     asyncio.run(main())
