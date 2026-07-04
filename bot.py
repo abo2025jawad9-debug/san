@@ -2,10 +2,11 @@ import asyncio
 import os
 import random
 import time
-import requests
 import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from bs4 import BeautifulSoup
+# === التعديل الجوهري: استخدام curl_cffi بدلاً من requests العادية ===
+from curl_cffi import requests 
 
 # ==========================================
 # 1. الإعدادات
@@ -23,21 +24,13 @@ ROUND_OF_16_TEAMS = {
     "3": "استراليا", "41": "كندا"
 }
 
-USER_AGENTS = [
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36 Edg/121.0.0.0",
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:122.0) Gecko/20100101 Firefox/122.0",
-]
-
 INVISIBLE_CHARS = ["\u064C", "\u064C"]
 ARABIC_DIACRITICS = [
     "\u064E", "\u064F", "\u0650", "\u064F", "\u064C",
     "\u064D", "\u0651", "\u0651", "\u0640", "\u0653"
 ]
 
-# أكواد الدول العربية (ISO 3166-1 alpha-2)
+# أكواد الدول العربية
 ARAB_COUNTRY_CODES = [
     "sa", "eg", "ae", "jo", "kw", "qa", "om", "bh", "iq", "lb",
     "ma", "tn", "dz", "ly", "sd", "so", "dj", "km", "mr", "ps", "ye"
@@ -55,16 +48,14 @@ ARAB_COUNTRY_NAMES = {
 # 2. جلب بروكسيات عربية
 # ==========================================
 def fetch_arab_proxies(max_per_source=50):
-    """جلب بروكسيات من جميع الدول العربية"""
     proxies = []
-    headers = {"User-Agent": random.choice(USER_AGENTS)}
-
-    # المصدر 1: ProxyScrape API (جميع الدول العربية مرة واحدة)
+    
+    # استخدام impersonate لخداع أنظمة حماية مواقع البروكسي أيضاً
     try:
         countries = ",".join(ARAB_COUNTRY_CODES)
         url = f"https://api.proxyscrape.com/v4/free-proxy-list/get?request=display_proxies&proxy_format=protocolipport&format=text&country={countries}"
         print(f"[🌐] جلب بروكسيات عربية من ProxyScrape...")
-        resp = requests.get(url, headers=headers, timeout=15)
+        resp = requests.get(url, impersonate="chrome120", timeout=15)
         if resp.status_code == 200 and resp.text.strip():
             lines = [line.strip() for line in resp.text.strip().split("\n") if line.strip()]
             for line in lines:
@@ -73,16 +64,13 @@ def fetch_arab_proxies(max_per_source=50):
                 elif ":" in line and not line.startswith("http"):
                     proxies.append(f"http://{line}")
             print(f"   ✔ تم جلب {len(lines)} بروكسي عربي")
-        else:
-            print("   ✘ لا يوجد بروكسيات عربية في ProxyScrape")
     except Exception as e:
         print(f"   ✘ خطأ ProxyScrape: {e}")
 
-    # المصدر 2: free-proxy-list.net (فلترة يدوية للدول العربية)
     try:
         print(f"[🌐] جلب بروكسيات عربية من free-proxy-list.net...")
         url = "https://free-proxy-list.net/"
-        resp = requests.get(url, headers=headers, timeout=15)
+        resp = requests.get(url, impersonate="chrome120", timeout=15)
         if resp.status_code == 200:
             soup = BeautifulSoup(resp.text, "html.parser")
             table = soup.find("table", {"class": "table-striped"})
@@ -102,15 +90,12 @@ def fetch_arab_proxies(max_per_source=50):
     except Exception as e:
         print(f"   ✘ خطأ free-proxy-list: {e}")
 
-    # المصدر 3: proxy-list.download (HTTP)
     try:
         print(f"[🌐] جلب بروكسيات عربية من proxy-list.download...")
         url = "https://www.proxy-list.download/api/v1/get?type=http"
-        resp = requests.get(url, headers=headers, timeout=15)
+        resp = requests.get(url, impersonate="chrome120", timeout=15)
         if resp.status_code == 200:
             lines = [line.strip() for line in resp.text.strip().split("\n") if line.strip()]
-            # هذا المصدر لا يعطي دول، نضيف الكل ونختبر لاحقاً
-            # لكنه عادةً يعطي بروكسيات مختلطة، نجرب
             for line in lines[:max_per_source]:
                 if ":" in line and not line.startswith("http"):
                     proxies.append(f"http://{line}")
@@ -118,7 +103,6 @@ def fetch_arab_proxies(max_per_source=50):
     except Exception as e:
         print(f"   ✘ خطأ proxy-list: {e}")
 
-    # إزالة التكرارات
     proxies = list(dict.fromkeys(proxies))
     random.shuffle(proxies)
     print(f"\n[📊] إجمالي بروكسيات عربية فريدة: {len(proxies)}")
@@ -128,46 +112,36 @@ def fetch_arab_proxies(max_per_source=50):
 # 3. اختبار البروكسيات العربية
 # ==========================================
 def test_single_proxy(proxy_url):
-    """اختبار بروكسي عربي"""
     proxies = {"http": proxy_url, "https": proxy_url}
-    headers = {"User-Agent": random.choice(USER_AGENTS)}
-
     try:
         start = time.time()
         resp = requests.get(
             FORM_PAGE_URL,
-            headers=headers,
             proxies=proxies,
-            timeout=5,
+            timeout=10,
+            impersonate="chrome120", # محاكاة المتصفح أثناء الفحص
             allow_redirects=True
         )
         latency = time.time() - start
-
         if resp.status_code == 200 and len(resp.text) > 1000:
             return (proxy_url, latency, True)
     except Exception:
         pass
-
     return (proxy_url, 999, False)
 
 def test_arab_proxies(proxy_list, max_workers=40, min_working=3):
-    """اختبار البروكسيات العربية - يتوقف عند أول 3 ناجحين"""
     if not proxy_list:
         return []
-
     working = []
     print(f"\n[🔬] اختبار {len(proxy_list)} بروكسي عربي...")
 
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         futures = {executor.submit(test_single_proxy, p): p for p in proxy_list}
-
         for future in as_completed(futures):
             proxy, latency, is_working = future.result()
             if is_working:
                 working.append((proxy, latency))
                 print(f"   ✔ عامل #{len(working)}: {proxy[:45]} | {latency:.2f}s")
-
-                # نتوقف عند الوصول للحد الأدنى
                 if len(working) >= min_working:
                     for f in futures:
                         f.cancel()
@@ -178,29 +152,28 @@ def test_arab_proxies(proxy_list, max_workers=40, min_working=3):
     return [p[0] for p in working]
 
 # ==========================================
-# 4. المساعدات
+# 4. المساعدات وتجهيز البيانات
 # ==========================================
 def load_names_from_file(filename="names.txt"):
     if os.path.exists(filename):
         with open(filename, "r", encoding="utf-8") as f:
+            # فلترة الأسطر الفارغة بدقة
             names = [line.strip() for line in f if line.strip()]
             if names:
                 print(f"[✔] تم تحميل {len(names)} اسم")
                 return names
-    print(f"[⚠] ملف {filename} غير موجود! استخدام افتراضية.")
+    print(f"[⚠] ملف {filename} غير موجود أو فارغ! استخدام الأسماء الافتراضية.")
     return [
-        "محمد لطف يحيى 772490746",
-        "أحمد سعيد علي 771234567",
-        "خالد محمود سالم 773456789",
-        "عبدالله فؤاد عمر 774567890",
+        "محمد لطف يحيى الزيلعي",
+        "أحمد سعيد علي",
+        "خالد محمود سالم",
+        "عبدالله فؤاد عمر",
     ]
 
 def make_name_strictly_unique(name):
     hidden_prob = random.uniform(0.40, 0.80)
     diacritic_prob = random.uniform(0.20, 0.50)
     unique_name = ""
-    if random.random() < 0.5:
-        unique_name += "".join(random.choices(INVISIBLE_CHARS, k=random.randint(1, 2)))
     for char in name:
         unique_name += char
         if char != " ":
@@ -208,9 +181,8 @@ def make_name_strictly_unique(name):
                 unique_name += random.choice(INVISIBLE_CHARS)
             if random.random() < diacritic_prob:
                 unique_name += random.choice(ARABIC_DIACRITICS)
-                if random.random() < 0.20:
-                    unique_name += random.choice(ARABIC_DIACRITICS)
-    return f"{unique_name}{' ' * random.randint(0, 3)}"
+    # تنظيف الفراغات النهائية لتجنب أخطاء Laravel
+    return unique_name.strip()
 
 def generate_random_phone():
     return f"{random.choice(YEMEN_PREFIXES)}{''.join([str(random.randint(0,9)) for _ in range(7)])}"
@@ -220,7 +192,7 @@ def generate_random_phone():
 # ==========================================
 def fetch_form_data(session, proxies, headers):
     try:
-        resp = session.get(FORM_PAGE_URL, headers=headers, proxies=proxies, timeout=10)
+        resp = session.get(FORM_PAGE_URL, headers=headers, proxies=proxies, timeout=15)
         if resp.status_code != 200:
             return None
         soup = BeautifulSoup(resp.text, "html.parser")
@@ -239,10 +211,11 @@ def prepare_payload(live_fields, names_list):
     unique_name = make_name_strictly_unique(raw_name)
     team_id = random.choice(list(ROUND_OF_16_TEAMS.keys()))
     team_name = ROUND_OF_16_TEAMS[team_id]
+    
     payload = live_fields.copy()
     payload.update({
         "customField_18": team_id,
-        "customField_19": unique_name,
+        "customField_19": unique_name, # الاسم المنظف
         "customField_20": generate_random_phone(),
         "customField_24": random.choice(GOVERNORATES),
     })
@@ -251,7 +224,7 @@ def prepare_payload(live_fields, names_list):
 def check_success(status, html_text):
     if status != 200:
         return False
-    keywords = ["شكرا", "تم بنجاح", "success", "thank", "تم الإرسال", "تم التسجيل"]
+    keywords = ["شكرا", "تم بنجاح", "success", "thank", "تم الإرسال", "تم التسجيل", "تم الاشتراك"]
     return any(kw in html_text.lower() for kw in keywords)
 
 # ==========================================
@@ -260,46 +233,42 @@ def check_success(status, html_text):
 async def send_single_request(request_num, names_list, working_proxies, semaphore):
     async with semaphore:
         if not working_proxies:
-            print(f"[✘] الطلب {request_num:02d} فشل: لا يوجد بروكسي عربي عامل")
             return False
 
-        # نختار 3 بروكسيات عشوائية للتجربة
         candidates = random.sample(working_proxies, min(3, len(working_proxies)))
 
         for proxy_url in candidates:
-            session = requests.Session()
+            # === استخدام المتصفح الوهمي هنا (السر في تجاوز Cloudflare) ===
+            session = requests.Session(impersonate="chrome120")
+            
             headers = {
-                "User-Agent": random.choice(USER_AGENTS),
                 "Referer": FORM_PAGE_URL,
                 "Accept-Language": "ar,en-US;q=0.9,en;q=0.8",
-                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
-                "Accept-Encoding": "gzip, deflate, br",
                 "Origin": "https://quwatasad.com",
             }
             proxies = {"http": proxy_url, "https": proxy_url}
 
             try:
-                # GET
                 def do_get():
                     return fetch_form_data(session, proxies, headers)
 
                 live_fields = await asyncio.wait_for(
                     asyncio.get_event_loop().run_in_executor(None, do_get),
-                    timeout=15
+                    timeout=20
                 )
 
-                if not live_fields:
+                if not live_fields or not live_fields.get('_token'):
+                    session.close()
                     continue
 
                 payload, team_name = prepare_payload(live_fields, names_list)
 
-                # POST
                 def do_post():
-                    return session.post(TARGET_URL, data=payload, headers=headers, proxies=proxies, timeout=10, allow_redirects=True)
+                    return session.post(TARGET_URL, data=payload, headers=headers, proxies=proxies, timeout=15, allow_redirects=True)
 
                 resp = await asyncio.wait_for(
                     asyncio.get_event_loop().run_in_executor(None, do_post),
-                    timeout=15
+                    timeout=20
                 )
 
                 if check_success(resp.status_code, resp.text):
@@ -314,7 +283,7 @@ async def send_single_request(request_num, names_list, working_proxies, semaphor
                 session.close()
                 continue
 
-        print(f"[✘] الطلب {request_num:02d} فشل بعد {len(candidates)} محاولات")
+        print(f"[✘] الطلب {request_num:02d} فشل (ربما البروكسي ضعيف أو تم الحظر)")
         return False
 
 # ==========================================
@@ -322,7 +291,7 @@ async def send_single_request(request_num, names_list, working_proxies, semaphor
 # ==========================================
 async def main():
     print("=" * 60)
-    print("--- سكربت قوة أسد - بروكسيات عربية ---")
+    print("--- سكربت قوة أسد (النسخة الاحترافية - تجاوز Cloudflare) ---")
     print("=" * 60)
     print(f"[🌍] الدول المستهدفة: {', '.join(ARAB_COUNTRY_NAMES.values())}")
 
@@ -333,23 +302,19 @@ async def main():
         print(f"--- الدورة {round_num} من 6 ---")
         print(f"{'='*50}")
 
-        # جلب بروكسيات عربية
         print("[🌐] جلب بروكسيات عربية...")
         raw_proxies = fetch_arab_proxies(max_per_source=50)
 
         if not raw_proxies:
             print("[✘] لا يوجد بروكسيات عربية متاحة!")
-            print("[💡] الحلول: 1) بروكسي مدفوع 2) تشغيل محلي")
             return
 
-        # اختبار البروكسيات العربية
         working_proxies = test_arab_proxies(raw_proxies, max_workers=40, min_working=3)
 
         if not working_proxies:
-            print("[✘] لا يوجد بروكسي عربي عامل!")
+            print("[✘] لا يوجد بروكسي عربي عامل حالياً!")
             return
 
-        # تشغيل الطلبات
         print("\n[⏱️] بدء إرسال الطلبات...")
         semaphore = asyncio.Semaphore(5)
         tasks = [send_single_request(i, names_list, working_proxies, semaphore) for i in range(1, 100)]
@@ -369,4 +334,3 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
-
