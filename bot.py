@@ -5,8 +5,7 @@ import time
 import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from bs4 import BeautifulSoup
-# === التعديل الجوهري: استخدام curl_cffi بدلاً من requests العادية ===
-from curl_cffi import requests 
+from curl_cffi import requests
 
 # ==========================================
 # 1. الإعدادات
@@ -15,22 +14,34 @@ FORM_PAGE_URL = "https://quwatasad.com/worldcup2026"
 TARGET_URL = "https://quwatasad.com/form-submit"
 
 YEMEN_PREFIXES = ["77", "78", "73", "71", "70"]
-GOVERNORATES = [str(i) for i in (1, 23)]
+# ✅ FIX: كان (1, 23) ينتج ["1", "23"] فقط — الآن من 1 إلى 22
+GOVERNORATES = [str(i) for i in range(1, 23)]
 
-ROUND_OF_16_TEAMS = {
-    "1": "الأرجنتين", "12": "البرازيل", "38": "rangeفرنسا", "9": "إنجلترا",
-    "8": "إسبانيا", "25": "المكسيك", "13": "البرتغال", "27": "النرويج",
-    "32": "بلجيكا", "33": "سويسرا", "40": "كرواتيا", "30": "باراغواي",
-    "3": "استراليا", "41": "كندا"
+# ✅ FIX: قائمة فرق كاملة (48 فريق) بدون أخطاء
+TEAMS = {
+    "1": "الأرجنتين", "2": "الأردن", "3": "أستراليا", "4": "أوزبكستان",
+    "5": "ألمانيا", "6": "أوروغواي", "7": "إسكتلندا", "8": "إسبانيا",
+    "9": "إنجلترا", "10": "إيران", "11": "الإكوادور", "12": "البرازيل",
+    "13": "البرتغال", "14": "البوسنة والهرسك", "15": "التشيك", "16": "الجزائر",
+    "17": "الرأس الأخضر(كاب فيردي)", "18": "السعودية", "19": "السنغال", "20": "السويد",
+    "21": "العراق", "22": "كوريا الجنوبية", "23": "الكونغو", "24": "المغرب",
+    "25": "المكسيك", "26": "النمسا", "27": "النرويج", "28": "اليابان",
+    "29": "الولايات المتحدة الأمريكية", "30": "باراغواي", "31": "بنما", "32": "بلجيكا",
+    "33": "سويسرا", "34": "تركيا", "35": "تونس", "36": "جنوب إفريقيا",
+    "37": "غانا", "38": "فرنسا", "39": "قطر", "40": "كرواتيا",
+    "41": "كندا", "42": "كولومبيا", "43": "كوراساو", "44": "ساحل العاج (كوت ديفوار)",
+    "45": "مصر", "46": "نيوزيلندا", "47": "هايتي", "48": "هولندا",
 }
 
-INVISIBLE_CHARS = ["\u064C", "\u064C"]
+# ✅ FIX: أحرف خفية متنوعة (Zero Width Joiner, Zero Width Non-Joiner, etc)
+INVISIBLE_CHARS = ["\u200C", "\u200D", "\u2060", "\uFEFF", "\u180E"]
+
+# ✅ FIX: تشكيلات عربية متنوعة بدون تكرار
 ARABIC_DIACRITICS = [
-    "\u064E", "\u064F", "\u0650", "\u064F", "\u064C",
-    "\u064D", "\u0651", "\u0651", "\u0640", "\u0653"
+    "\u064E", "\u064F", "\u0650", "\u064B", "\u064C",
+    "\u064D", "\u0651", "\u0652", "\u0653", "\u0670"
 ]
 
-# أكواد الدول العربية
 ARAB_COUNTRY_CODES = [
     "sa", "eg", "ae", "jo", "kw", "qa", "om", "bh", "iq", "lb",
     "ma", "tn", "dz", "ly", "sd", "so", "dj", "km", "mr", "ps", "ye"
@@ -50,7 +61,6 @@ ARAB_COUNTRY_NAMES = {
 def fetch_arab_proxies(max_per_source=50):
     proxies = []
     
-    # استخدام impersonate لخداع أنظمة حماية مواقع البروكسي أيضاً
     try:
         countries = ",".join(ARAB_COUNTRY_CODES)
         url = f"https://api.proxyscrape.com/v4/free-proxy-list/get?request=display_proxies&proxy_format=protocolipport&format=text&country={countries}"
@@ -119,7 +129,7 @@ def test_single_proxy(proxy_url):
             FORM_PAGE_URL,
             proxies=proxies,
             timeout=10,
-            impersonate="chrome120", # محاكاة المتصفح أثناء الفحص
+            impersonate="chrome120",
             allow_redirects=True
         )
         latency = time.time() - start
@@ -129,7 +139,7 @@ def test_single_proxy(proxy_url):
         pass
     return (proxy_url, 999, False)
 
-def test_arab_proxies(proxy_list, max_workers=40, min_working=3):
+def test_arab_proxies(proxy_list, max_workers=40, min_working=5):
     if not proxy_list:
         return []
     working = []
@@ -142,7 +152,8 @@ def test_arab_proxies(proxy_list, max_workers=40, min_working=3):
             if is_working:
                 working.append((proxy, latency))
                 print(f"   ✔ عامل #{len(working)}: {proxy[:45]} | {latency:.2f}s")
-                if len(working) >= min_working:
+                # ✅ FIX: نجمع 10 بروكسيات عاملة بدلاً من 3 فقط
+                if len(working) >= 10:
                     for f in futures:
                         f.cancel()
                     break
@@ -157,7 +168,6 @@ def test_arab_proxies(proxy_list, max_workers=40, min_working=3):
 def load_names_from_file(filename="names.txt"):
     if os.path.exists(filename):
         with open(filename, "r", encoding="utf-8") as f:
-            # فلترة الأسطر الفارغة بدقة
             names = [line.strip() for line in f if line.strip()]
             if names:
                 print(f"[✔] تم تحميل {len(names)} اسم")
@@ -171,21 +181,22 @@ def load_names_from_file(filename="names.txt"):
     ]
 
 def make_name_strictly_unique(name):
-    hidden_prob = random.uniform(0.40, 0.80)
-    diacritic_prob = random.uniform(0.20, 0.50)
+    hidden_prob = random.uniform(0.15, 0.35)
+    diacritic_prob = random.uniform(0.10, 0.25)
     unique_name = ""
-    for char in name:
+    for i, char in enumerate(name):
         unique_name += char
         if char != " ":
             if random.random() < hidden_prob:
                 unique_name += random.choice(INVISIBLE_CHARS)
-            if random.random() < diacritic_prob:
+            if random.random() < diacritic_prob and i % 2 == 0:
                 unique_name += random.choice(ARABIC_DIACRITICS)
-    # تنظيف الفراغات النهائية لتجنب أخطاء Laravel
     return unique_name.strip()
 
 def generate_random_phone():
-    return f"{random.choice(YEMEN_PREFIXES)}{''.join([str(random.randint(0,9)) for _ in range(7)])}"
+    prefix = random.choice(YEMEN_PREFIXES)
+    suffix = ''.join(str(random.randint(0, 9)) for _ in range(7))
+    return f"{prefix}{suffix}"
 
 # ==========================================
 # 5. جلب التوكن + إرسال الطلب
@@ -209,13 +220,13 @@ def fetch_form_data(session, proxies, headers):
 def prepare_payload(live_fields, names_list):
     raw_name = random.choice(names_list)
     unique_name = make_name_strictly_unique(raw_name)
-    team_id = random.choice(list(ROUND_OF_16_TEAMS.keys()))
-    team_name = ROUND_OF_16_TEAMS[team_id]
+    team_id = random.choice(list(TEAMS.keys()))
+    team_name = TEAMS[team_id]
     
     payload = live_fields.copy()
     payload.update({
         "customField_18": team_id,
-        "customField_19": unique_name, # الاسم المنظف
+        "customField_19": unique_name,
         "customField_20": generate_random_phone(),
         "customField_24": random.choice(GOVERNORATES),
     })
@@ -238,13 +249,14 @@ async def send_single_request(request_num, names_list, working_proxies, semaphor
         candidates = random.sample(working_proxies, min(3, len(working_proxies)))
 
         for proxy_url in candidates:
-            # === استخدام المتصفح الوهمي هنا (السر في تجاوز Cloudflare) ===
             session = requests.Session(impersonate="chrome120")
             
             headers = {
                 "Referer": FORM_PAGE_URL,
                 "Accept-Language": "ar,en-US;q=0.9,en;q=0.8",
                 "Origin": "https://quwatasad.com",
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
             }
             proxies = {"http": proxy_url, "https": proxy_url}
 
@@ -263,8 +275,12 @@ async def send_single_request(request_num, names_list, working_proxies, semaphor
 
                 payload, team_name = prepare_payload(live_fields, names_list)
 
+                # ✅ FIX: إضافة Content-Type للـ POST
+                post_headers = headers.copy()
+                post_headers["Content-Type"] = "application/x-www-form-urlencoded"
+
                 def do_post():
-                    return session.post(TARGET_URL, data=payload, headers=headers, proxies=proxies, timeout=15, allow_redirects=True)
+                    return session.post(TARGET_URL, data=payload, headers=post_headers, proxies=proxies, timeout=15, allow_redirects=True)
 
                 resp = await asyncio.wait_for(
                     asyncio.get_event_loop().run_in_executor(None, do_post),
@@ -291,9 +307,20 @@ async def send_single_request(request_num, names_list, working_proxies, semaphor
 # ==========================================
 async def main():
     print("=" * 60)
-    print("--- سكربت قوة أسد (النسخة الاحترافية - تجاوز Cloudflare) ---")
+    print("--- سكربت قوة أسد (النسخة المصححة - تجاوز Cloudflare) ---")
     print("=" * 60)
     print(f"[🌍] الدول المستهدفة: {', '.join(ARAB_COUNTRY_NAMES.values())}")
+
+    # ✅ FIX: التحقق من curl_cffi قبل البدء
+    try:
+        test_session = requests.Session(impersonate="chrome120")
+        test_resp = test_session.get("https://httpbin.org/get", timeout=10)
+        test_session.close()
+        print(f"[✔] curl_cffi يعمل بشكل صحيح (HTTP {test_resp.status_code})")
+    except Exception as e:
+        print(f"[✘] curl_cffi لا يعمل: {e}")
+        print("[✘] تأكد من تثبيت: pip install curl_cffi")
+        return
 
     names_list = load_names_from_file("names.txt")
 
@@ -309,23 +336,30 @@ async def main():
             print("[✘] لا يوجد بروكسيات عربية متاحة!")
             return
 
-        working_proxies = test_arab_proxies(raw_proxies, max_workers=40, min_working=3)
+        # ✅ FIX: نجمع 10 بروكسيات عاملة على الأقل
+        working_proxies = test_arab_proxies(raw_proxies, max_workers=40, min_working=5)
 
         if not working_proxies:
             print("[✘] لا يوجد بروكسي عربي عامل حالياً!")
             return
 
         print("\n[⏱️] بدء إرسال الطلبات...")
-        semaphore = asyncio.Semaphore(5)
-        tasks = [send_single_request(i, names_list, working_proxies, semaphore) for i in range(1, 100)]
+        # ✅ FIX: تقليل الـ semaphore إلى 3 لتجنب الحظر
+        semaphore = asyncio.Semaphore(3)
+        
+        # ✅ FIX: تقليل عدد الطلبات لكل دورة (5 طلبات لكل بروكسي كحد أقصى)
+        request_count = min(30, len(working_proxies) * 5)
+        
+        tasks = [send_single_request(i, names_list, working_proxies, semaphore) for i in range(1, request_count + 1)]
         results = await asyncio.gather(*tasks, return_exceptions=True)
 
         success = sum(1 for r in results if r is True)
-        print(f"\n[📊] الدورة {round_num}: نجاح={success}/99")
+        print(f"\n[📊] الدورة {round_num}: نجاح={success}/{request_count}")
 
         if round_num < 6:
-            wait_time = random.randint(5, 15)
-            print(f"\n[⏳] انتظار {wait_time} ثوانٍ...")
+            # ✅ FIX: زيادة وقت الانتظار بين الدورات
+            wait_time = random.randint(30, 60)
+            print(f"\n[⏳] انتظار {wait_time} ثانية...")
             await asyncio.sleep(wait_time)
 
     print("\n" + "=" * 60)
@@ -334,3 +368,4 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
+
