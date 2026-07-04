@@ -2,7 +2,6 @@ import asyncio
 import os
 import random
 import time
-import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from bs4 import BeautifulSoup
 from curl_cffi import requests
@@ -13,7 +12,9 @@ from curl_cffi import requests
 FORM_PAGE_URL = "https://quwatasad.com/worldcup2026"
 TARGET_URL = "https://quwatasad.com/form-submit"
 
-YEMEN_PREFIXES = ["77", "78", "73", "71", "70"]
+# ✅ تاكد: فقط 77 أو 73 أو 71 — بدون 78 أو 70
+YEMEN_PREFIXES = ["77", "73", "71"]
+
 GOVERNORATES = [str(i) for i in range(1, 23)]
 
 TEAMS = {
@@ -31,11 +32,56 @@ TEAMS = {
     "45": "مصر", "46": "نيوزيلندا", "47": "هايتي", "48": "هولندا",
 }
 
-INVISIBLE_CHARS = ["\u200C", "\u200D", "\u2060", "\uFEFF", "\u180E"]
+# ✅ أحرف خفية متعددة (Zero Width, Joiners, Non-Joiners, etc.)
+INVISIBLE_CHARS = [
+    "\u200C", "\u200D", "\u2060", "\uFEFF", "\u180E",
+    "\u200B", "\u200E", "\u200F", "\u202A", "\u202B",
+    "\u202C", "\u202D", "\u202E", "\u2061", "\u2062",
+    "\u2063", "\u2064", "\u206A", "\u206B", "\u206C",
+    "\u206D", "\u206E", "\u206F", "\u00AD",
+]
+
+# ✅ تشكيلات عربية متنوعة
 ARABIC_DIACRITICS = [
     "\u064E", "\u064F", "\u0650", "\u064B", "\u064C",
-    "\u064D", "\u0651", "\u0652", "\u0653", "\u0670"
+    "\u064D", "\u0651", "\u0652", "\u0653", "\u0670",
+    "\u0654", "\u0655", "\u0640",
 ]
+
+# ✅ حروف عربية مشابهة (تبدو متشابهة لكنها مختلفة يونيكود)
+ARABIC_LOOKALIKES = {
+    "ا": ["\u0627", "\u0622", "\u0623", "\u0625", "\u0671"],
+    "أ": ["\u0623", "\u0625", "\u0671"],
+    "آ": ["\u0622"],
+    "إ": ["\u0625"],
+    "ي": ["\u064A", "\u0649", "\u06CC", "\u06D0"],
+    "ى": ["\u0649", "\u064A"],
+    "ه": ["\u0647", "\u06D5"],
+    "ة": ["\u0629", "\u0647"],
+    "ك": ["\u0643", "\u06A9"],
+    "و": ["\u0648", "\u06C4"],
+    "د": ["\u062F", "\u0688"],
+    "ر": ["\u0631", "\u0691"],
+    "س": ["\u0633", "\u0698"],
+    "ز": ["\u0632", "\u0698"],
+    "ط": ["\u0637", "\u0638"],
+    "ظ": ["\u0638", "\u0637"],
+    "ع": ["\u0639", "\u063A"],
+    "غ": ["\u063A", "\u0639"],
+    "ف": ["\u0641", "\u06A4"],
+    "ق": ["\u0642", "\u06A8"],
+    "ب": ["\u0628", "\u067E"],
+    "ت": ["\u062A", "\u062B"],
+    "ث": ["\u062B", "\u062A"],
+    "ج": ["\u062C", "\u0686"],
+    "ح": ["\u062D", "\u062E"],
+    "خ": ["\u062E", "\u062D"],
+    "ص": ["\u0635", "\u0636"],
+    "ض": ["\u0636", "\u0635"],
+    "م": ["\u0645", "\u0645"],
+    "ن": ["\u0646", "\u06BA"],
+    "ل": ["\u0644", "\u06B5"],
+}
 
 ARAB_COUNTRY_CODES = [
     "sa", "eg", "ae", "jo", "kw", "qa", "om", "bh", "iq", "lb",
@@ -50,7 +96,6 @@ ARAB_COUNTRY_NAMES = {
     "dj": "جيبوتي", "km": "جزر القمر", "mr": "موريتانيا", "ps": "فلسطين", "ye": "اليمن"
 }
 
-# ✅ متنوعات للتمويه
 USER_AGENTS = [
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
@@ -158,12 +203,10 @@ def test_proxies(proxy_list, max_workers=50, min_working=15):
             if is_working:
                 working.append((proxy, latency))
                 print(f"   ✔ #{len(working)}: {proxy[:40]} | {latency:.1f}s")
-                if len(working) >= min_working:
-                    # نجمع أكثر قليلاً ثم نتوقف
-                    if len(working) >= min_working + 5:
-                        for f in futures:
-                            f.cancel()
-                        break
+                if len(working) >= min_working + 5:
+                    for f in futures:
+                        f.cancel()
+                    break
 
     working.sort(key=lambda x: x[1])
     print(f"\n[✅] عاملة: {len(working)}")
@@ -187,21 +230,55 @@ def load_names_from_file(filename="names.txt"):
         "سعيد علي محسن الجابري", "ناصر صالح عبدالله الهتاري",
     ]
 
+# ✅ تاكد: زخرفة الاسم بشكل عشوائي وفريد
 def make_name_unique(name):
-    hidden_prob = random.uniform(0.10, 0.25)
-    diacritic_prob = random.uniform(0.05, 0.15)
-    unique_name = ""
-    for i, char in enumerate(name):
-        unique_name += char
-        if char != " ":
-            if random.random() < hidden_prob:
-                unique_name += random.choice(INVISIBLE_CHARS)
-            if random.random() < diacritic_prob and i % 3 == 0:
-                unique_name += random.choice(ARABIC_DIACRITICS)
-    return unique_name.strip()
+    """
+    زخرفة الاسم بشكل عشوائي بحيث يكون فريداً في كل مرة.
+    تستخدم:
+    1. أحرف خفية (Zero Width Characters)
+    2. تشكيلات عربية متنوعة
+    3. حروف عربية مشابهة (تبدو متشابهة لكنها مختلفة يونيكود)
+    4. ترتيب عشوائي للتشكيلات
+    """
+    result = ""
 
+    for i, char in enumerate(name):
+        # ✅ 1. استبدال الحرف بمكافئ مشابه أحياناً (30% احتمال)
+        if char in ARABIC_LOOKALIKES and random.random() < 0.30:
+            char = random.choice(ARABIC_LOOKALIKES[char])
+
+        result += char
+
+        if char == " ":
+            continue
+
+        # ✅ 2. إضافة أحرف خفية (40-70% احتمال لكل حرف)
+        if random.random() < random.uniform(0.40, 0.70):
+            # إضافة 1-3 أحرف خفية
+            for _ in range(random.randint(1, 3)):
+                result += random.choice(INVISIBLE_CHARS)
+
+        # ✅ 3. إضافة تشكيلات عربية (30-50% احتمال)
+        if random.random() < random.uniform(0.30, 0.50):
+            # إضافة 1-2 تشكيلات
+            for _ in range(random.randint(1, 2)):
+                result += random.choice(ARABIC_DIACRITICS)
+
+    # ✅ 4. إضافة أحرف خفية في البداية والنهاية أحياناً
+    if random.random() < 0.5:
+        result = random.choice(INVISIBLE_CHARS) + result
+    if random.random() < 0.5:
+        result = result + random.choice(INVISIBLE_CHARS)
+
+    return result.strip()
+
+# ✅ تاكد: رقم هاتف عشوائي يبدأ بـ 77 أو 73 أو 71 فقط
 def generate_phone():
-    prefix = random.choice(YEMEN_PREFIXES)
+    """
+    إنشاء رقم هاتف يمني عشوائي يبدأ بـ 77 أو 73 أو 71 فقط.
+    7 أرقام بعد البادئة.
+    """
+    prefix = random.choice(YEMEN_PREFIXES)  # فقط 77 أو 73 أو 71
     suffix = ''.join(str(random.randint(0, 9)) for _ in range(7))
     return f"{prefix}{suffix}"
 
@@ -254,11 +331,12 @@ async def send_one_request(request_num, names_list, proxy_url, semaphore):
                 session.close()
                 return False
 
-            # تحضير البيانات
+            # ✅ تاكد: تحضير بيانات فريدة
             raw_name = random.choice(names_list)
             unique_name = make_name_unique(raw_name)
             team_id = random.choice(list(TEAMS.keys()))
             team_name = TEAMS[team_id]
+            phone = generate_phone()  # ✅ تاكد: 77 أو 73 أو 71
 
             payload = {
                 "_token": token,
@@ -267,8 +345,8 @@ async def send_one_request(request_num, names_list, proxy_url, semaphore):
                 "TopicID": (soup.find("input", {"name": "TopicID"}) or {}).get("value", "152"),
                 "WebmasterSectionId": (soup.find("input", {"name": "WebmasterSectionId"}) or {}).get("value", ""),
                 "customField_18": team_id,
-                "customField_19": unique_name,
-                "customField_20": generate_phone(),
+                "customField_19": unique_name,  # ✅ تاكد: اسم مزخرف وفريد
+                "customField_20": phone,        # ✅ تاكد: رقم يبدأ بـ 77/73/71
                 "customField_24": random.choice(GOVERNORATES),
             }
 
@@ -307,7 +385,10 @@ async def send_one_request(request_num, names_list, proxy_url, semaphore):
 # ==========================================
 async def main():
     print("=" * 60)
-    print("--- قوة أسد v3: كل بروكسي = طلب واحد ---")
+    print("--- قوة أسد v4: كل بروكسي = طلب واحد ---")
+    print("=" * 60)
+    print("[✅] رقم الهاتف: يبدأ بـ 77 أو 73 أو 71 فقط")
+    print("[✅] الاسم: مزخرف بأحرف خفية + تشكيلات + حروف مشابهة")
     print("=" * 60)
 
     names_list = load_names_from_file("names.txt")
@@ -336,11 +417,10 @@ async def main():
         print(f"\n[⏱️] إرسال {len(working_proxies)} طلب (واحد لكل بروكسي)...")
 
         # ✅ كل بروكسي = طلب واحد فقط
-        semaphore = asyncio.Semaphore(5)  # 5 متوازية كحد أقصى
+        semaphore = asyncio.Semaphore(5)
         tasks = []
         for i, proxy in enumerate(working_proxies, 1):
             tasks.append(send_one_request(i, names_list, proxy, semaphore))
-            # ✅ delay عشوائي بين إنشاء المهام
             await asyncio.sleep(random.uniform(0.5, 1.5))
 
         results = await asyncio.gather(*tasks, return_exceptions=True)
