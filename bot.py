@@ -2,7 +2,8 @@ import asyncio
 import os
 import random
 import time
-import requests
+#import requests
+from curl_cffi import requests
 import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from bs4 import BeautifulSoup
