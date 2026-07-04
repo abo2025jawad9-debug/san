@@ -18,10 +18,45 @@ jobs:
       with:
         python-version: '3.11' 
 
-    - name: Install Dependencies
+    # ✅ NEW: تثبيت أدوات البناء المطلوبة لتجميع curl_cffi
+    - name: Install System Dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y build-essential libcurl4-openssl-dev
+
+    - name: Install Python Dependencies
       run: |
         python -m pip install --upgrade pip
         pip install curl_cffi beautifulsoup4
 
+    # ✅ NEW: التحقق من أن curl_cffi يعمل قبل تشغيل البوت
+    - name: Verify curl_cffi Installation
+      run: |
+        python -c "from curl_cffi import requests; print('curl_cffi installed successfully')"
+        python -c "from curl_cffi import requests; s = requests.Session(impersonate='chrome120'); r = s.get('https://httpbin.org/get', timeout=10); print('Test HTTP status:', r.status_code); s.close()"
+
+    # ✅ NEW: إنشاء names.txt تلقائياً إذا لم يكن موجوداً
+    - name: Create names.txt if not exists
+      run: |
+        if [ ! -f names.txt ]; then
+          cat > names.txt << 'EOF'
+        محمد لطف يحيى الزيلعي
+        أحمد صالح سعيد علي
+        خالد صالح محمود سالم
+        عبدالله صالح فؤاد عمر
+        علي محمد أحمد القاضي
+        فهد عبدالرحمن سالم باسليم
+        سعيد علي محسن الجابري
+        ناصر صالح عبدالله الهتاري
+        هشام أحمد علي البركاني
+        ياسر محمد عبدالله السياغي
+        EOF
+          echo "[✔] Created default names.txt"
+        else
+          echo "[✔] names.txt already exists"
+        fi
+
+    # ✅ NEW: timeout لمنع البوت من التعليق لساعات
     - name: Execute Bot
       run: python bot.py
+      timeout-minutes: 15
