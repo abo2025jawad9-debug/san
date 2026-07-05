@@ -1,163 +1,163 @@
 import asyncio
 import os
 import random
-import time
-import re
-from concurrent.futures import ThreadPoolExecutor, as_completed
+import aiohttp
 from bs4 import BeautifulSoup
-from curl_cffi import requests
+import time
+import sys
 
 # ==========================================
-# 1. الإعدادات
+# 1. الإعدادات الأساسية
 # ==========================================
+YEMEN_PREFIXES = ["77", "78", "72", "73"]
+GOVERNORATES = [str(i) for i in range(1, 23)]
+
+ROUND_OF_16_TEAMS = {
+    "1": "الأرجنتين",
+    "12": "البرازيل",
+    "38": "فرنسا",
+    "9": "إنجلترا",
+    "8": "إسبانيا",
+    "25": "المكسيك",
+    "13": "البرتغال",
+    "27": "النرويج",
+    "32": "بلجيكا",
+    "33": "سويسرا",
+    "16": "المغرب",
+    "45": "مصر",
+}
+
 FORM_PAGE_URL = "https://quwatasad.com/worldcup2026"
 TARGET_URL = "https://quwatasad.com/form-submit"
 
-YEMEN_PREFIXES = ["77", "78", "73", "71", "70"]
-GOVERNORATES = [str(i) for i in range(1, 23)]
-
-TEAMS = {
-    "1": "الأرجنتين", "2": "الأردن", "3": "أستراليا", "4": "أوزبكستان",
-    "5": "ألمانيا", "6": "أوروغواي", "7": "إسكتلندا", "8": "إسبانيا",
-    "9": "إنجلترا", "10": "إيران", "11": "الإكوادور", "12": "البرازيل",
-    "13": "البرتغال", "14": "البوسنة والهرسك", "15": "التشيك", "16": "الجزائر",
-    "17": "الرأس الأخضر(كاب فيردي)", "18": "السعودية", "19": "السنغال", "20": "السويد",
-    "21": "العراق", "22": "كوريا الجنوبية", "23": "الكونغو", "24": "المغرب",
-    "25": "المكسيك", "26": "النمسا", "27": "النرويج", "28": "اليابان",
-    "29": "الولايات المتحدة الأمريكية", "30": "باراغواي", "31": "بنما", "32": "بلجيكا",
-    "33": "سويسرا", "34": "تركيا", "35": "تونس", "36": "جنوب إفريقيا",
-    "37": "غانا", "38": "فرنسا", "39": "قطر", "40": "كرواتيا",
-    "41": "كندا", "42": "كولومبيا", "43": "كوراساو", "44": "ساحل العاج (كوت ديفوار)",
-    "45": "مصر", "46": "نيوزيلندا", "47": "هايتي", "48": "هولندا",
+HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    "Referer": FORM_PAGE_URL,
+    "Accept-Language": "ar,en-US;q=0.9,en;q=0.8",
 }
 
-INVISIBLE_CHARS = ["\u200C", "\u200D", "\u2060", "\uFEFF", "\u180E"]
+# مصادر البروكسيات المجانية
+PROXY_SOURCES = [
+    "https://api.proxyscrape.com/v4/free-proxy-list/get?request=display_proxies&proxy_format=protocolipport&format=text",
+    "https://cdn.jsdelivr.net/gh/proxifly/free-proxy-list@main/proxies/protocols/http/data.txt",
+    "https://cdn.jsdelivr.net/gh/proxifly/free-proxy-list@main/proxies/protocols/https/data.txt",
+]
 
+INVISIBLE_CHARS = ["\u064C", "\u064C"]
 ARABIC_DIACRITICS = [
-    "\u064E", "\u064F", "\u0650", "\u064B", "\u064C",
-    "\u064D", "\u0651", "\u0652", "\u0653", "\u0670"
+    "\u064E", "\u064F", "\u0650", "\u064F", "\u064C",
+    "\u064D", "\u0651", "\u0651", "\u0640", "\u0653"
 ]
 
-ARAB_COUNTRY_CODES = [
-    "sa", "eg", "ae", "jo", "kw", "qa", "om", "bh", "iq", "lb",
-    "ma", "tn", "dz", "ly", "sd", "so", "dj", "km", "mr", "ps", "ye"
-]
-
-ARAB_COUNTRY_NAMES = {
-    "sa": "السعودية", "eg": "مصر", "ae": "الإمارات", "jo": "الأردن",
-    "kw": "الكويت", "qa": "قطر", "om": "عمان", "bh": "البحرين",
-    "iq": "العراق", "lb": "لبنان", "ma": "المغرب", "tn": "تونس",
-    "dz": "الجزائر", "ly": "ليبيا", "sd": "السودان", "so": "الصومال",
-    "dj": "جيبوتي", "km": "جزر القمر", "mr": "موريتانيا", "ps": "فلسطين", "ye": "اليمن"
-}
-
 # ==========================================
-# 2. جلب بروكسيات عربية
+# 2. مدير البروكسيات
 # ==========================================
-def fetch_arab_proxies(max_per_source=50):
-    proxies = []
+class ProxyManager:
+    def __init__(self):
+        self.proxies = []
+        self.current_index = 0
+        self.fail_counts = {}
+        self.success_counts = {}
+        self.current_proxy = None
+        self.lock = asyncio.Lock()
     
-    try:
-        countries = ",".join(ARAB_COUNTRY_CODES)
-        url = f"https://api.proxyscrape.com/v4/free-proxy-list/get?request=display_proxies&proxy_format=protocolipport&format=text&country={countries}"
-        print(f"[🌐] جلب بروكسيات عربية من ProxyScrape...")
-        resp = requests.get(url, impersonate="chrome120", timeout=15)
-        if resp.status_code == 200 and resp.text.strip():
-            lines = [line.strip() for line in resp.text.strip().split("\n") if line.strip()]
-            for line in lines:
-                if line.startswith("http://") or line.startswith("https://"):
-                    proxies.append(line)
-                elif ":" in line and not line.startswith("http"):
-                    proxies.append(f"http://{line}")
-            print(f"   ✔ تم جلب {len(lines)} بروكسي عربي")
-    except Exception as e:
-        print(f"   ✘ خطأ ProxyScrape: {e}")
-
-    try:
-        print(f"[🌐] جلب بروكسيات عربية من free-proxy-list.net...")
-        url = "https://free-proxy-list.net/"
-        resp = requests.get(url, impersonate="chrome120", timeout=15)
-        if resp.status_code == 200:
-            soup = BeautifulSoup(resp.text, "html.parser")
-            table = soup.find("table", {"class": "table-striped"})
-            if table:
-                rows = table.find("tbody").find_all("tr") if table.find("tbody") else []
-                count = 0
-                for row in rows:
-                    cols = row.find_all("td")
-                    if len(cols) >= 8:
-                        ip = cols[0].text.strip()
-                        port = cols[1].text.strip()
-                        country_code = cols[2].text.strip().lower()
-                        if country_code in ARAB_COUNTRY_CODES:
-                            proxies.append(f"http://{ip}:{port}")
-                            count += 1
-                print(f"   ✔ تم جلب {count} بروكسي عربي")
-    except Exception as e:
-        print(f"   ✘ خطأ free-proxy-list: {e}")
-
-    try:
-        print(f"[🌐] جلب بروكسيات عربية من proxy-list.download...")
-        url = "https://www.proxy-list.download/api/v1/get?type=http"
-        resp = requests.get(url, impersonate="chrome120", timeout=15)
-        if resp.status_code == 200:
-            lines = [line.strip() for line in resp.text.strip().split("\n") if line.strip()]
-            for line in lines[:max_per_source]:
-                if ":" in line and not line.startswith("http"):
-                    proxies.append(f"http://{line}")
-            print(f"   ✔ تم جلب {len(lines[:max_per_source])} بروكسي (سنختبرها)")
-    except Exception as e:
-        print(f"   ✘ خطأ proxy-list: {e}")
-
-    proxies = list(dict.fromkeys(proxies))
-    random.shuffle(proxies)
-    print(f"\n[📊] إجمالي بروكسيات عربية فريدة: {len(proxies)}")
-    return proxies[:150]
-
-# ==========================================
-# 3. اختبار البروكسيات العربية
-# ==========================================
-def test_single_proxy(proxy_url):
-    proxies = {"http": proxy_url, "https": proxy_url}
-    try:
-        start = time.time()
-        resp = requests.get(
-            FORM_PAGE_URL,
-            proxies=proxies,
-            timeout=10,
-            impersonate="chrome120",
-            allow_redirects=True
-        )
-        latency = time.time() - start
-        if resp.status_code == 200 and len(resp.text) > 1000:
-            return (proxy_url, latency, True)
-    except Exception:
-        pass
-    return (proxy_url, 999, False)
-
-def test_arab_proxies(proxy_list, max_workers=40, min_working=10):
-    if not proxy_list:
-        return []
-    working = []
-    print(f"\n[🔬] اختبار {len(proxy_list)} بروكسي عربي...")
-
-    with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        futures = {executor.submit(test_single_proxy, p): p for p in proxy_list}
-        for future in as_completed(futures):
-            proxy, latency, is_working = future.result()
-            if is_working:
-                working.append((proxy, latency))
-                print(f"   ✔ عامل #{len(working)}: {proxy[:45]} | {latency:.2f}s")
-                if len(working) >= min_working:
-                    # نستمر في جمع المزيد
-                    pass
-
-    working.sort(key=lambda x: x[1])
-    print(f"\n[✅] بروكسيات عربية عاملة: {len(working)}")
-    return [p[0] for p in working]
+    async def fetch_proxies(self, session):
+        all_proxies = set()
+        for source in PROXY_SOURCES:
+            try:
+                async with session.get(source, timeout=20) as resp:
+                    if resp.status == 200:
+                        text = await resp.text()
+                        for line in text.strip().split('\n'):
+                            line = line.strip()
+                            if line and ':' in line:
+                                if line.startswith('http://'):
+                                    line = line[7:]
+                                elif line.startswith('https://'):
+                                    line = line[8:]
+                                all_proxies.add(line)
+                        print(f"[✔] جلبت {len(all_proxies)} بروكسي من {source[:50]}...")
+            except Exception as e:
+                print(f"[⚠] فشل جلب {source[:50]}: {e}")
+        
+        self.proxies = list(all_proxies)
+        random.shuffle(self.proxies)
+        print(f"[✔] إجمالي البروكسيات المجلبة: {len(self.proxies)}")
+        return len(self.proxies) > 0
+    
+    async def test_proxy(self, session, proxy_str):
+        proxy_url = f"http://{proxy_str}"
+        try:
+            async with session.get(
+                "https://httpbin.org/ip",
+                proxy=proxy_url,
+                timeout=aiohttp.ClientTimeout(total=10),
+                ssl=False
+            ) as resp:
+                if resp.status == 200:
+                    return True
+        except:
+            pass
+        return False
+    
+    async def filter_working_proxies(self, session, max_test=30):
+        if not self.proxies:
+            return False
+        
+        test_list = self.proxies[:max_test]
+        tasks = [self.test_proxy(session, p) for p in test_list]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        
+        working = []
+        for proxy, is_working in zip(test_list, results):
+            if is_working is True:
+                working.append(proxy)
+        
+        self.proxies = working
+        self.fail_counts = {p: 0 for p in working}
+        self.success_counts = {p: 0 for p in working}
+        
+        print(f"[✔] البروكسيات العاملة بعد الاختبار: {len(working)}")
+        return len(working) > 0
+    
+    def get_next_proxy(self):
+        if not self.proxies:
+            return None
+        
+        attempts = 0
+        while attempts < len(self.proxies):
+            proxy = self.proxies[self.current_index]
+            if self.fail_counts.get(proxy, 0) < 2:
+                self.current_proxy = proxy
+                return proxy
+            
+            self.current_index = (self.current_index + 1) % len(self.proxies)
+            attempts += 1
+        
+        # إعادة تعيين
+        print("[⚠] جميع البروكسيات فاشلة! إعادة التعيين...")
+        for p in self.proxies:
+            self.fail_counts[p] = 0
+        self.current_index = 0
+        self.current_proxy = self.proxies[0]
+        return self.current_proxy
+    
+    def report_success(self, proxy):
+        self.success_counts[proxy] = self.success_counts.get(proxy, 0) + 1
+        self.fail_counts[proxy] = 0
+    
+    def report_failure(self, proxy):
+        self.fail_counts[proxy] = self.fail_counts.get(proxy, 0) + 1
+        print(f"[⚠] فشل {proxy} ({self.fail_counts[proxy]}/2)")
+        
+        if self.fail_counts[proxy] >= 2:
+            print(f"[🔄] تبديل البروكسي: {proxy} فشل مرتين")
+            self.current_index = (self.current_index + 1) % len(self.proxies)
+            return self.get_next_proxy()
+        return proxy
 
 # ==========================================
-# 4. المساعدات وتجهيز البيانات
+# 3. دوال المساعدة
 # ==========================================
 def load_names_from_file(filename="names.txt"):
     if os.path.exists(filename):
@@ -166,57 +166,95 @@ def load_names_from_file(filename="names.txt"):
             if names:
                 print(f"[✔] تم تحميل {len(names)} اسم")
                 return names
-    print(f"[⚠] ملف {filename} غير موجود أو فارغ! استخدام الأسماء الافتراضية.")
+    print(f"[⚠] ملف {filename} غير موجود! استخدام أسماء افتراضية.")
     return [
-        "محمد لطف يحيى الزيلعي",
-        "أحمد صالح سعيد علي",
-        "خالد صالح محمود سالم",
-        "عبدالله صالح فؤاد عمر",
+        "محمد لطف يحيئ 772490746",
+        "محمد لطف يحيى 772490746",
+        "محمد لطف الزيلعي 772490746",
+        "مجمد لطف الزيلعي 772490746",
     ]
 
 def make_name_strictly_unique(name):
-    hidden_prob = random.uniform(0.15, 0.35)
-    diacritic_prob = random.uniform(0.10, 0.25)
+    hidden_prob = random.uniform(0.40, 0.80)
+    diacritic_prob = random.uniform(0.20, 0.50)
     unique_name = ""
-    for i, char in enumerate(name):
+    
+    if random.random() < 0.5:
+        unique_name += "".join(random.choices(INVISIBLE_CHARS, k=random.randint(1, 2)))
+    
+    for char in name:
         unique_name += char
         if char != " ":
             if random.random() < hidden_prob:
                 unique_name += random.choice(INVISIBLE_CHARS)
-            if random.random() < diacritic_prob and i % 2 == 0:
+            if random.random() < diacritic_prob:
                 unique_name += random.choice(ARABIC_DIACRITICS)
-    return unique_name.strip()
+                if random.random() < 0.20:
+                    unique_name += random.choice(ARABIC_DIACRITICS)
+    
+    trailing_spaces = " " * random.randint(0, 3)
+    return f"{unique_name}{trailing_spaces}"
 
 def generate_random_phone():
     prefix = random.choice(YEMEN_PREFIXES)
-    suffix = ''.join(str(random.randint(0, 9)) for _ in range(7))
+    suffix = "".join([str(random.randint(0, 9)) for _ in range(7)])
     return f"{prefix}{suffix}"
 
 # ==========================================
-# 5. جلب التوكن + إرسال الطلب
+# 4. جلب بيانات النموذج
 # ==========================================
-def fetch_form_data(session, proxies, headers):
+async def fetch_live_form_data(session, proxy_manager):
+    print("[⌛] جاري جلب التوكن...")
+    proxy = proxy_manager.get_next_proxy()
+    proxy_url = f"http://{proxy}" if proxy else None
+    
     try:
-        resp = session.get(FORM_PAGE_URL, headers=headers, proxies=proxies, timeout=15)
-        if resp.status_code != 200:
-            return None
-        soup = BeautifulSoup(resp.text, "html.parser")
-        return {
-            "_token": (soup.find("input", {"name": "_token"}) or {}).get("value", ""),
-            "date": (soup.find("input", {"name": "date"}) or {}).get("value", ""),
-            "section_id": (soup.find("input", {"name": "section_id"}) or {}).get("value", ""),
-            "TopicID": (soup.find("input", {"name": "TopicID"}) or {}).get("value", ""),
-            "WebmasterSectionId": (soup.find("input", {"name": "WebmasterSectionId"}) or {}).get("value", ""),
-        }
-    except Exception:
+        async with session.get(
+            FORM_PAGE_URL, 
+            headers=HEADERS, 
+            proxy=proxy_url,
+            timeout=15,
+            ssl=False
+        ) as response:
+            if response.status != 200:
+                print(f"[✘] فشل جلب الصفحة: {response.status}")
+                return None
+
+            html_content = await response.text()
+            soup = BeautifulSoup(html_content, "html.parser")
+
+            token_input = soup.find("input", {"name": "_token"})
+            topic_id_input = soup.find("input", {"name": "TopicID"})
+            webmaster_id_input = soup.find("input", {"name": "WebmasterSectionId"})
+            date_input = soup.find("input", {"name": "date"})
+            section_id_input = soup.find("input", {"name": "section_id"})
+
+            live_fields = {
+                "_token": token_input.get("value", "mock_token") if token_input else "mock_token",
+                "date": date_input.get("value", "2026-07-06") if date_input else "2026-07-06",
+                "section_id": section_id_input.get("value", "0") if section_id_input else "0",
+                "TopicID": topic_id_input.get("value", "152") if topic_id_input else "152",
+                "WebmasterSectionId": webmaster_id_input.get("value", "") if webmaster_id_input else "",
+            }
+
+            print(f"[✔] جلب التوكن نجح عبر: {proxy}")
+            proxy_manager.report_success(proxy)
+            return live_fields
+    except Exception as e:
+        print(f"[✘] خطأ: {str(e)[:80]}")
+        if proxy:
+            proxy_manager.report_failure(proxy)
         return None
 
+# ==========================================
+# 5. تجهيز الحمولة
+# ==========================================
 def prepare_payload(live_fields, names_list):
     raw_name = random.choice(names_list)
     unique_name = make_name_strictly_unique(raw_name)
-    team_id = random.choice(list(TEAMS.keys()))
-    team_name = TEAMS[team_id]
-    
+    team_id = random.choice(list(ROUND_OF_16_TEAMS.keys()))
+    team_name = ROUND_OF_16_TEAMS[team_id]
+
     payload = live_fields.copy()
     payload.update({
         "customField_18": team_id,
@@ -226,166 +264,124 @@ def prepare_payload(live_fields, names_list):
     })
     return payload, team_name
 
-def check_success(status, html_text):
-    if status != 200:
+def check_submission_success(status, html_text):
+    success_keywords = ["شكرا", "تم بنجاح", "success", "thank", "شكراً"]
+    is_success = any(kw in html_text.lower() for kw in success_keywords)
+    return (status == 200 or is_success), "نجاح" if (status == 200 or is_success) else f"كود: {status}"
+
+# ==========================================
+# 6. إرسال الطلب مع إعادة المحاولة
+# ==========================================
+async def send_request(session, request_num, live_fields, names_list, proxy_manager):
+    payload, team_name = prepare_payload(live_fields, names_list)
+    
+    proxy = proxy_manager.get_next_proxy()
+    if not proxy:
+        print(f"[✘] لا يوجد بروكسي!")
         return False
-    keywords = ["شكرا", "تم بنجاح", "success", "thank", "تم الإرسال", "تم التسجيل", "تم الاشتراك"]
-    return any(kw in html_text.lower() for kw in keywords)
+    
+    proxy_url = f"http://{proxy}"
+    max_retries = 2
+    attempt = 0
+    
+    while attempt < max_retries:
+        try:
+            async with session.post(
+                TARGET_URL, 
+                data=payload, 
+                headers=HEADERS, 
+                proxy=proxy_url,
+                timeout=aiohttp.ClientTimeout(total=15),
+                ssl=False
+            ) as response:
+                status = response.status
+                html_text = await response.text()
+                is_success, message = check_submission_success(status, html_text)
 
-# ==========================================
-# 6. Worker واحد = بروكسي واحد + Session ثابتة
-# ==========================================
-async def worker_send_requests(worker_id, names_list, proxy_url, max_requests, semaphore, global_counter):
-    """
-    كل Worker يستخدم بروكسي واحد و Session ثابتة.
-    إذا نجح الطلب → يستمر بنفس البروكسي.
-    إذا فشل الطلب → يحاول مرة ثانية بنفس البروكسي.
-    إذا فشل مرتين متتاليتين → يتوقف ويتحول لبروكسي ثاني.
-    """
-    async with semaphore:
-        session = requests.Session(impersonate="chrome120")
-        
-        headers = {
-            "Referer": FORM_PAGE_URL,
-            "Accept-Language": "ar,en-US;q=0.9,en;q=0.8",
-            "Origin": "https://quwatasad.com",
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
-        }
-        proxies = {"http": proxy_url, "https": proxy_url}
-
-        local_success = 0
-        local_fail = 0
-        consecutive_fail = 0
-
-        for req_num in range(1, max_requests + 1):
-            # إذا فشل مرتين متتاليتين → نتوقف ونغير البروكسي
-            if consecutive_fail >= 2:
-                print(f"[✘] Worker {worker_id}: توقف (فشل متتالي×2) | {proxy_url[:35]}...")
-                break
-
-            try:
-                # 1. جلب التوكن
-                def do_get():
-                    return fetch_form_data(session, proxies, headers)
-
-                live_fields = await asyncio.wait_for(
-                    asyncio.get_event_loop().run_in_executor(None, do_get),
-                    timeout=20
-                )
-
-                if not live_fields or not live_fields.get('_token'):
-                    consecutive_fail += 1
-                    print(f"[⚠] Worker {worker_id}: فشل جلب Token ({consecutive_fail}/2) | {proxy_url[:35]}")
-                    continue
-
-                # 2. تجهيز البيانات
-                payload, team_name = prepare_payload(live_fields, names_list)
-
-                post_headers = headers.copy()
-                post_headers["Content-Type"] = "application/x-www-form-urlencoded"
-
-                # 3. إرسال الطلب
-                def do_post():
-                    return session.post(TARGET_URL, data=payload, headers=post_headers, proxies=proxies, timeout=15, allow_redirects=True)
-
-                resp = await asyncio.wait_for(
-                    asyncio.get_event_loop().run_in_executor(None, do_post),
-                    timeout=20
-                )
-
-                # 4. التحقق من النجاح
-                if check_success(resp.status_code, resp.text):
-                    # ✅ نجاح → نستمر بنفس البروكسي
-                    global_counter[0] += 1
-                    local_success += 1
-                    consecutive_fail = 0
-                    print(f"[🏆 نجاح] Worker {worker_id} | #{req_num} | {team_name} | {proxy_url[:35]}...")
+                if is_success:
+                    proxy_manager.report_success(proxy)
+                    print(f"[🏆] #{request_num:02d} | {proxy} | {team_name} | نجاح")
+                    return True
                 else:
-                    # ❌ فشل → نحاول مرة ثانية بنفس البروكسي
-                    consecutive_fail += 1
-                    local_fail += 1
-                    print(f"[✘] Worker {worker_id}: فشل إرسال ({consecutive_fail}/2) | {proxy_url[:35]}")
-
-            except Exception as e:
-                # ❌ خطأ → نحاول مرة ثانية بنفس البروكسي
-                consecutive_fail += 1
-                local_fail += 1
-                print(f"[✘] Worker {worker_id}: خطأ ({consecutive_fail}/2) | {proxy_url[:35]} | {str(e)[:50]}")
-
-        session.close()
-        print(f"[📊] Worker {worker_id}: نجاح={local_success} | فشل={local_fail} | {proxy_url[:35]}")
-        return local_success
+                    print(f"[⚠] #{request_num:02d} | {proxy} | {message}")
+                    new_proxy = proxy_manager.report_failure(proxy)
+                    if new_proxy != proxy:
+                        proxy = new_proxy
+                        proxy_url = f"http://{proxy}"
+                        attempt += 1
+                        print(f"[🔄] إعادة المحاولة {attempt}/{max_retries} بـ {proxy}")
+                        continue
+                    return False
+                    
+        except Exception as e:
+            print(f"[✘] #{request_num:02d} | {proxy} | {str(e)[:60]}")
+            new_proxy = proxy_manager.report_failure(proxy)
+            if new_proxy != proxy:
+                proxy = new_proxy
+                proxy_url = f"http://{proxy}"
+                attempt += 1
+                print(f"[🔄] إعادة المحاولة {attempt}/{max_retries} بـ {proxy}")
+                continue
+            return False
+    
+    print(f"[✘] #{request_num:02d} فشل بعد {max_retries} محاولات")
+    return False
 
 # ==========================================
-# 7. التشغيل الرئيسي
+# 7. الدالة الرئيسية
 # ==========================================
 async def main():
     print("=" * 60)
-    print("--- سكربت قوة أسد (بروكسيات عربية + تثبيت البروكسي الناجح) ---")
+    print("--- سكربت التصويت - GitHub Actions Edition ---")
     print("=" * 60)
-    print(f"[🌍] الدول المستهدفة: {', '.join(ARAB_COUNTRY_NAMES.values())}")
-
-    # التحقق من curl_cffi
-    try:
-        test_session = requests.Session(impersonate="chrome120")
-        test_resp = test_session.get("https://httpbin.org/get", timeout=10)
-        test_session.close()
-        print(f"[✔] curl_cffi يعمل بشكل صحيح (HTTP {test_resp.status_code})")
-    except Exception as e:
-        print(f"[✘] curl_cffi لا يعمل: {e}")
-        print("[✘] تأكد من تثبيت: pip install curl_cffi")
-        return
 
     names_list = load_names_from_file("names.txt")
-
-    for round_num in range(1, 7):  # 6 دورات فقط
-        print(f"\n{'='*50}")
-        print(f"--- الدورة {round_num} من 6 ---")
-        print(f"{'='*50}")
-
-        print("[🌐] جلب بروكسيات عربية...")
-        raw_proxies = fetch_arab_proxies(max_per_source=50)
-
-        if not raw_proxies:
-            print("[✘] لا يوجد بروكسيات عربية متاحة!")
+    proxy_manager = ProxyManager()
+    
+    connector = aiohttp.TCPConnector(limit=50, limit_per_host=30, ssl=False)
+    timeout = aiohttp.ClientTimeout(total=300)
+    
+    async with aiohttp.ClientSession(connector=connector, timeout=timeout) as session:
+        
+        # جلب البروكسيات
+        print("\n[⌛] جاري جلب البروكسيات...")
+        await proxy_manager.fetch_proxies(session)
+        
+        print("\n[⌛] جاري اختبار البروكسيات...")
+        await proxy_manager.filter_working_proxies(session, max_test=30)
+        
+        if not proxy_manager.proxies:
+            print("[🛑] لا توجد بروكسيات عاملة! إيقاف.")
+            return
+        
+        # جلب التوكن
+        live_fields = await fetch_live_form_data(session, proxy_manager)
+        if not live_fields:
+            print("[🛑] فشل جلب التوكن! إيقاف.")
             return
 
-        # نجمع 15 بروكسي عربي عامل على الأقل
-        working_proxies = test_arab_proxies(raw_proxies, max_workers=40, min_working=15)
+        # تشغيل الدورات
+        TOTAL_ROUNDS = 6
+        REQUESTS_PER_ROUND = 20  # تقليل العدد لتناسب GitHub Actions
+        
+        for round_num in range(1, TOTAL_ROUNDS + 1):
+            print(f"\n{'='*50}")
+            print(f"--- الدورة {round_num}/{TOTAL_ROUNDS} ---")
+            print(f"{'='*50}")
 
-        if not working_proxies:
-            print("[✘] لا يوجد بروكسي عربي عامل حالياً!")
-            return
+            tasks = [
+                send_request(session, i, live_fields, names_list, proxy_manager)
+                for i in range(1, REQUESTS_PER_ROUND + 1)
+            ]
+            results = await asyncio.gather(*tasks)
+            
+            success_count = sum(1 for r in results if r)
+            print(f"\n[📊] الدورة {round_num}: {success_count}/{REQUESTS_PER_ROUND} نجاح")
 
-        print(f"\n[⏱️] بدء إرسال الطلبات... كل Worker = بروكسي واحد (يستمر حتى الفشل×2)")
-        
-        # كل بروكسي = Worker واحد
-        # Semaphore = عدد البروكسيات العاملة (كلهم يشتغلون مع بعض)
-        semaphore = asyncio.Semaphore(len(working_proxies))
-        
-        # كل بروكسي يرسل حتى 20 طلب (أو حتى يفشل مرتين متتاليتين)
-        max_requests_per_proxy = 20
-        
-        global_success = [0]  # mutable counter
-        
-        tasks = [
-            worker_send_requests(
-                i+1, names_list, proxy, max_requests_per_proxy, semaphore, global_success
-            ) 
-            for i, proxy in enumerate(working_proxies)
-        ]
-        
-        results = await asyncio.gather(*tasks, return_exceptions=True)
-
-        total_success = global_success[0]
-        total_proxies = len(working_proxies)
-        print(f"\n[📊] الدورة {round_num}: نجاح={total_success} | بروكسيات مستخدمة={total_proxies}")
-
-        if round_num < 6:
-            wait_time = random.randint(30, 60)
-            print(f"\n[⏳] انتظار {wait_time} ثانية...")
-            await asyncio.sleep(wait_time)
+            if round_num < TOTAL_ROUNDS:
+                wait_time = random.randint(5, 10)
+                print(f"[⏳] انتظار {wait_time} ثوانٍ...")
+                await asyncio.sleep(wait_time)
 
     print("\n" + "=" * 60)
     print("--- تم الانتهاء ---")
