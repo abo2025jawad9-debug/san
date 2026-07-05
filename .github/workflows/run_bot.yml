@@ -6,7 +6,7 @@ on:
   
   # تشغيل تلقائي كل 6 ساعات
   schedule:
-    - cron: '0 */0.05 * * *'
+    - cron: '0 */0.2 * * *'
 
 jobs:
   run-bot-job:
