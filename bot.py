@@ -14,7 +14,7 @@ GOVERNORATES = [str(i) for i in range(1, 23)]
 
 ROUND_OF_16_TEAMS = {
     "1": "الأرجنتين",
-    "1": "الأرجنتين",
+    "12": "البرازيل",
     "38": "فرنسا",
     "9": "إنجلترا",
     "8": "إسبانيا",
@@ -24,9 +24,7 @@ ROUND_OF_16_TEAMS = {
     "32": "بلجيكا",
     "33": "سويسرا",
     "16": "المغرب",
-    "38": "فرنسا",
     "45": "مصر",
-    "27": "النرويج"
 }
 
 FORM_PAGE_URL = "https://quwatasad.com/worldcup2026"
@@ -67,7 +65,7 @@ class ProxyManager:
         all_proxies = set()
         for source in PROXY_SOURCES:
             try:
-                async with session.get(source, timeout=20) as resp:
+                async with session.get(source, timeout=25) as resp:
                     if resp.status == 200:
                         text = await resp.text()
                         for line in text.strip().split('\n'):
@@ -88,25 +86,33 @@ class ProxyManager:
         return len(self.proxies) > 0
     
     async def test_proxy(self, session, proxy_str):
+        """
+        اختبار البروكسي مباشرة على الموقع المستهدف
+        بدلاً من httpbin.org (أدق بكثير)
+        """
         proxy_url = f"http://{proxy_str}"
         try:
             async with session.get(
-                "https://httpbin.org/ip",
+                FORM_PAGE_URL,
                 proxy=proxy_url,
-                timeout=aiohttp.ClientTimeout(total=10),
+                headers=HEADERS,
+                timeout=aiohttp.ClientTimeout(total=12),
                 ssl=False
             ) as resp:
-                if resp.status == 200:
+                # إذا رجع 200 أو حتى 403 يعني البروكسي يتصل بالموقع
+                if resp.status in [200, 301, 302, 403, 404]:
                     return True
-        except:
+        except Exception:
             pass
         return False
     
-    async def filter_working_proxies(self, session, max_test=30):
+    async def filter_working_proxies(self, session, max_test=100):
         if not self.proxies:
             return False
         
         test_list = self.proxies[:max_test]
+        print(f"[⌛] جاري اختبار {len(test_list)} بروكسي على الموقع المستهدف...")
+        
         tasks = [self.test_proxy(session, p) for p in test_list]
         results = await asyncio.gather(*tasks, return_exceptions=True)
         
@@ -119,7 +125,7 @@ class ProxyManager:
         self.fail_counts = {p: 0 for p in working}
         self.success_counts = {p: 0 for p in working}
         
-        print(f"[✔] البروكسيات العاملة بعد الاختبار: {len(working)}")
+        print(f"[✔] البروكسيات العاملة: {len(working)}")
         return len(working) > 0
     
     def get_next_proxy(self):
@@ -203,50 +209,103 @@ def generate_random_phone():
     return f"{prefix}{suffix}"
 
 # ==========================================
-# 4. جلب بيانات النموذج
+# 4. جلب بيانات النموذج (مع إعادة المحاولة)
 # ==========================================
 async def fetch_live_form_data(session, proxy_manager):
+    """
+    يحاول جلب التوكن عبر عدة بروكسيات.
+    إذا فشلت جميعها، يحاول بدون بروكسي كآخر خيار.
+    """
     print("[⌛] جاري جلب التوكن...")
-    proxy = proxy_manager.get_next_proxy()
-    proxy_url = f"http://{proxy}" if proxy else None
     
+    # المحاولة عبر البروكسيات (حتى 10 بروكسيات)
+    for attempt in range(1, 11):
+        proxy = proxy_manager.get_next_proxy()
+        if not proxy:
+            break
+        
+        proxy_url = f"http://{proxy}"
+        try:
+            print(f"[⌛] محاولة {attempt}/10 جلب التوكن عبر: {proxy}")
+            async with session.get(
+                FORM_PAGE_URL, 
+                headers=HEADERS, 
+                proxy=proxy_url,
+                timeout=aiohttp.ClientTimeout(total=15),
+                ssl=False
+            ) as response:
+                if response.status != 200:
+                    print(f"[⚠] البروكسي {proxy} رجع كود: {response.status}")
+                    proxy_manager.report_failure(proxy)
+                    continue
+
+                html_content = await response.text()
+                soup = BeautifulSoup(html_content, "html.parser")
+
+                token_input = soup.find("input", {"name": "_token"})
+                topic_id_input = soup.find("input", {"name": "TopicID"})
+                webmaster_id_input = soup.find("input", {"name": "WebmasterSectionId"})
+                date_input = soup.find("input", {"name": "date"})
+                section_id_input = soup.find("input", {"name": "section_id"})
+
+                live_fields = {
+                    "_token": token_input.get("value", "") if token_input else "",
+                    "date": date_input.get("value", "2026-07-06") if date_input else "2026-07-06",
+                    "section_id": section_id_input.get("value", "0") if section_id_input else "0",
+                    "TopicID": topic_id_input.get("value", "152") if topic_id_input else "152",
+                    "WebmasterSectionId": webmaster_id_input.get("value", "") if webmaster_id_input else "",
+                }
+
+                # التحقق من وجود التوكن
+                if not live_fields["_token"]:
+                    print(f"[⚠] البروكسي {proxy} لم يجلب التوكن")
+                    proxy_manager.report_failure(proxy)
+                    continue
+
+                print(f"[✔] جلب التوكن نجح عبر: {proxy}")
+                proxy_manager.report_success(proxy)
+                return live_fields
+                
+        except Exception as e:
+            print(f"[✘] فشل البروكسي {proxy}: {str(e)[:80]}")
+            proxy_manager.report_failure(proxy)
+            await asyncio.sleep(1)
+    
+    # Fallback: محاولة بدون بروكسي
+    print("[⚠] جميع البروكسيات فشلت! محاولة بدون بروكسي...")
     try:
         async with session.get(
             FORM_PAGE_URL, 
             headers=HEADERS, 
-            proxy=proxy_url,
             timeout=15,
             ssl=False
         ) as response:
-            if response.status != 200:
-                print(f"[✘] فشل جلب الصفحة: {response.status}")
-                return None
+            if response.status == 200:
+                html_content = await response.text()
+                soup = BeautifulSoup(html_content, "html.parser")
+                
+                token_input = soup.find("input", {"name": "_token"})
+                topic_id_input = soup.find("input", {"name": "TopicID"})
+                webmaster_id_input = soup.find("input", {"name": "WebmasterSectionId"})
+                date_input = soup.find("input", {"name": "date"})
+                section_id_input = soup.find("input", {"name": "section_id"})
 
-            html_content = await response.text()
-            soup = BeautifulSoup(html_content, "html.parser")
-
-            token_input = soup.find("input", {"name": "_token"})
-            topic_id_input = soup.find("input", {"name": "TopicID"})
-            webmaster_id_input = soup.find("input", {"name": "WebmasterSectionId"})
-            date_input = soup.find("input", {"name": "date"})
-            section_id_input = soup.find("input", {"name": "section_id"})
-
-            live_fields = {
-                "_token": token_input.get("value", "mock_token") if token_input else "mock_token",
-                "date": date_input.get("value", "2026-07-06") if date_input else "2026-07-06",
-                "section_id": section_id_input.get("value", "0") if section_id_input else "0",
-                "TopicID": topic_id_input.get("value", "152") if topic_id_input else "152",
-                "WebmasterSectionId": webmaster_id_input.get("value", "") if webmaster_id_input else "",
-            }
-
-            print(f"[✔] جلب التوكن نجح عبر: {proxy}")
-            proxy_manager.report_success(proxy)
-            return live_fields
+                live_fields = {
+                    "_token": token_input.get("value", "") if token_input else "",
+                    "date": date_input.get("value", "2026-07-06") if date_input else "2026-07-06",
+                    "section_id": section_id_input.get("value", "0") if section_id_input else "0",
+                    "TopicID": topic_id_input.get("value", "152") if topic_id_input else "152",
+                    "WebmasterSectionId": webmaster_id_input.get("value", "") if webmaster_id_input else "",
+                }
+                
+                if live_fields["_token"]:
+                    print("[✔] جلب التوكن نجح بدون بروكسي!")
+                    return live_fields
     except Exception as e:
-        print(f"[✘] خطأ: {str(e)[:80]}")
-        if proxy:
-            proxy_manager.report_failure(proxy)
-        return None
+        print(f"[✘] فشل بدون بروكسي أيضاً: {e}")
+    
+    print("[🛑] فشل جلب التوكن نهائياً!")
+    return None
 
 # ==========================================
 # 5. تجهيز الحمولة
@@ -350,21 +409,20 @@ async def main():
         await proxy_manager.fetch_proxies(session)
         
         print("\n[⌛] جاري اختبار البروكسيات...")
-        await proxy_manager.filter_working_proxies(session, max_test=30)
+        await proxy_manager.filter_working_proxies(session, max_test=100)
         
         if not proxy_manager.proxies:
-            print("[🛑] لا توجد بروكسيات عاملة! إيقاف.")
-            return
+            print("[⚠] لا توجد بروكسيات عاملة! سأحاول بدون بروكسي...")
         
-        # جلب التوكن
+        # جلب التوكن (مع إعادة المحاولة + fallback)
         live_fields = await fetch_live_form_data(session, proxy_manager)
         if not live_fields:
-            print("[🛑] فشل جلب التوكن! إيقاف.")
+            print("[🛑] توقف السكربت: فشل جلب التوكن.")
             return
 
         # تشغيل الدورات
         TOTAL_ROUNDS = 6
-        REQUESTS_PER_ROUND = 20  # تقليل العدد لتناسب GitHub Actions
+        REQUESTS_PER_ROUND = 20
         
         for round_num in range(1, TOTAL_ROUNDS + 1):
             print(f"\n{'='*50}")
@@ -391,3 +449,4 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
+
