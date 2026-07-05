@@ -38,16 +38,29 @@ ARABIC_DIACRITICS = [
     "\u064D", "\u0651", "\u0652", "\u0653", "\u0670"
 ]
 
+ARAB_COUNTRY_CODES = [
+    "sa", "eg", "ae", "jo", "kw", "qa", "om", "bh", "iq", "lb",
+    "ma", "tn", "dz", "ly", "sd", "so", "dj", "km", "mr", "ps", "ye"
+]
+
+ARAB_COUNTRY_NAMES = {
+    "sa": "السعودية", "eg": "مصر", "ae": "الإمارات", "jo": "الأردن",
+    "kw": "الكويت", "qa": "قطر", "om": "عمان", "bh": "البحرين",
+    "iq": "العراق", "lb": "لبنان", "ma": "المغرب", "tn": "تونس",
+    "dz": "الجزائر", "ly": "ليبيا", "sd": "السودان", "so": "الصومال",
+    "dj": "جيبوتي", "km": "جزر القمر", "mr": "موريتانيا", "ps": "فلسطين", "ye": "اليمن"
+}
+
 # ==========================================
-# 2. جلب بروكسيات من كل الدول
+# 2. جلب بروكسيات عربية
 # ==========================================
-def fetch_proxies(max_per_source=50):
+def fetch_arab_proxies(max_per_source=50):
     proxies = []
     
     try:
-        # جلب من كل الدول (بدون country=...)
-        url = "https://api.proxyscrape.com/v4/free-proxy-list/get?request=display_proxies&proxy_format=protocolipport&format=text"
-        print(f"[🌐] جلب بروكسيات من ProxyScrape (كل الدول)...")
+        countries = ",".join(ARAB_COUNTRY_CODES)
+        url = f"https://api.proxyscrape.com/v4/free-proxy-list/get?request=display_proxies&proxy_format=protocolipport&format=text&country={countries}"
+        print(f"[🌐] جلب بروكسيات عربية من ProxyScrape...")
         resp = requests.get(url, impersonate="chrome120", timeout=15)
         if resp.status_code == 200 and resp.text.strip():
             lines = [line.strip() for line in resp.text.strip().split("\n") if line.strip()]
@@ -56,12 +69,12 @@ def fetch_proxies(max_per_source=50):
                     proxies.append(line)
                 elif ":" in line and not line.startswith("http"):
                     proxies.append(f"http://{line}")
-            print(f"   ✔ تم جلب {len(lines)} بروكسي")
+            print(f"   ✔ تم جلب {len(lines)} بروكسي عربي")
     except Exception as e:
         print(f"   ✘ خطأ ProxyScrape: {e}")
 
     try:
-        print(f"[🌐] جلب بروكسيات من free-proxy-list.net...")
+        print(f"[🌐] جلب بروكسيات عربية من free-proxy-list.net...")
         url = "https://free-proxy-list.net/"
         resp = requests.get(url, impersonate="chrome120", timeout=15)
         if resp.status_code == 200:
@@ -75,15 +88,16 @@ def fetch_proxies(max_per_source=50):
                     if len(cols) >= 8:
                         ip = cols[0].text.strip()
                         port = cols[1].text.strip()
-                        # قبول أي دولة
-                        proxies.append(f"http://{ip}:{port}")
-                        count += 1
-                print(f"   ✔ تم جلب {count} بروكسي")
+                        country_code = cols[2].text.strip().lower()
+                        if country_code in ARAB_COUNTRY_CODES:
+                            proxies.append(f"http://{ip}:{port}")
+                            count += 1
+                print(f"   ✔ تم جلب {count} بروكسي عربي")
     except Exception as e:
         print(f"   ✘ خطأ free-proxy-list: {e}")
 
     try:
-        print(f"[🌐] جلب بروكسيات من proxy-list.download...")
+        print(f"[🌐] جلب بروكسيات عربية من proxy-list.download...")
         url = "https://www.proxy-list.download/api/v1/get?type=http"
         resp = requests.get(url, impersonate="chrome120", timeout=15)
         if resp.status_code == 200:
@@ -91,17 +105,17 @@ def fetch_proxies(max_per_source=50):
             for line in lines[:max_per_source]:
                 if ":" in line and not line.startswith("http"):
                     proxies.append(f"http://{line}")
-            print(f"   ✔ تم جلب {len(lines[:max_per_source])} بروكسي")
+            print(f"   ✔ تم جلب {len(lines[:max_per_source])} بروكسي (سنختبرها)")
     except Exception as e:
         print(f"   ✘ خطأ proxy-list: {e}")
 
     proxies = list(dict.fromkeys(proxies))
     random.shuffle(proxies)
-    print(f"\n[📊] إجمالي بروكسيات فريدة: {len(proxies)}")
+    print(f"\n[📊] إجمالي بروكسيات عربية فريدة: {len(proxies)}")
     return proxies[:150]
 
 # ==========================================
-# 3. اختبار البروكسيات
+# 3. اختبار البروكسيات العربية
 # ==========================================
 def test_single_proxy(proxy_url):
     proxies = {"http": proxy_url, "https": proxy_url}
@@ -121,11 +135,11 @@ def test_single_proxy(proxy_url):
         pass
     return (proxy_url, 999, False)
 
-def test_proxies(proxy_list, max_workers=40, min_working=10):
+def test_arab_proxies(proxy_list, max_workers=40, min_working=10):
     if not proxy_list:
         return []
     working = []
-    print(f"\n[🔬] اختبار {len(proxy_list)} بروكسي...")
+    print(f"\n[🔬] اختبار {len(proxy_list)} بروكسي عربي...")
 
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         futures = {executor.submit(test_single_proxy, p): p for p in proxy_list}
@@ -135,11 +149,11 @@ def test_proxies(proxy_list, max_workers=40, min_working=10):
                 working.append((proxy, latency))
                 print(f"   ✔ عامل #{len(working)}: {proxy[:45]} | {latency:.2f}s")
                 if len(working) >= min_working:
-                    # نستمر في جمع بروكسيات أكثر
+                    # نستمر في جمع المزيد
                     pass
 
     working.sort(key=lambda x: x[1])
-    print(f"\n[✅] بروكسيات عاملة: {len(working)}")
+    print(f"\n[✅] بروكسيات عربية عاملة: {len(working)}")
     return [p[0] for p in working]
 
 # ==========================================
@@ -154,10 +168,10 @@ def load_names_from_file(filename="names.txt"):
                 return names
     print(f"[⚠] ملف {filename} غير موجود أو فارغ! استخدام الأسماء الافتراضية.")
     return [
-        "محمد لطفك يحيى الزيلعي",
-        "أحمدي صالح سعيد علي",
-        "خالدين صالح محمود سالم",
-        "محسن صالح فؤاد عمر",
+        "محمد لطف يحيى الزيلعي",
+        "أحمد صالح سعيد علي",
+        "خالد صالح محمود سالم",
+        "عبدالله صالح فؤاد عمر",
     ]
 
 def make_name_strictly_unique(name):
@@ -219,10 +233,15 @@ def check_success(status, html_text):
     return any(kw in html_text.lower() for kw in keywords)
 
 # ==========================================
-# 6. إرسال طلبات متعددة بنفس البروكسي حتى الفشل
+# 6. Worker واحد = بروكسي واحد + Session ثابتة
 # ==========================================
-async def send_requests_with_proxy(worker_id, names_list, proxy_url, max_requests_per_proxy, semaphore, global_success_counter):
-    """كل Worker يستخدم بروكسي واحد ويستمر فيه حتى يفشل مرتين متتاليتين"""
+async def worker_send_requests(worker_id, names_list, proxy_url, max_requests, semaphore, global_counter):
+    """
+    كل Worker يستخدم بروكسي واحد و Session ثابتة.
+    إذا نجح الطلب → يستمر بنفس البروكسي.
+    إذا فشل الطلب → يحاول مرة ثانية بنفس البروكسي.
+    إذا فشل مرتين متتاليتين → يتوقف ويتحول لبروكسي ثاني.
+    """
     async with semaphore:
         session = requests.Session(impersonate="chrome120")
         
@@ -239,8 +258,14 @@ async def send_requests_with_proxy(worker_id, names_list, proxy_url, max_request
         local_fail = 0
         consecutive_fail = 0
 
-        for req_num in range(1, max_requests_per_proxy + 1):
+        for req_num in range(1, max_requests + 1):
+            # إذا فشل مرتين متتاليتين → نتوقف ونغير البروكسي
+            if consecutive_fail >= 2:
+                print(f"[✘] Worker {worker_id}: توقف (فشل متتالي×2) | {proxy_url[:35]}...")
+                break
+
             try:
+                # 1. جلب التوكن
                 def do_get():
                     return fetch_form_data(session, proxies, headers)
 
@@ -251,16 +276,16 @@ async def send_requests_with_proxy(worker_id, names_list, proxy_url, max_request
 
                 if not live_fields or not live_fields.get('_token'):
                     consecutive_fail += 1
-                    if consecutive_fail >= 2:
-                        print(f"[✘] Worker {worker_id}: البروكسي توقف (Token فشل) | {proxy_url[:35]}")
-                        break
+                    print(f"[⚠] Worker {worker_id}: فشل جلب Token ({consecutive_fail}/2) | {proxy_url[:35]}")
                     continue
 
+                # 2. تجهيز البيانات
                 payload, team_name = prepare_payload(live_fields, names_list)
 
                 post_headers = headers.copy()
                 post_headers["Content-Type"] = "application/x-www-form-urlencoded"
 
+                # 3. إرسال الطلب
                 def do_post():
                     return session.post(TARGET_URL, data=payload, headers=post_headers, proxies=proxies, timeout=15, allow_redirects=True)
 
@@ -269,24 +294,24 @@ async def send_requests_with_proxy(worker_id, names_list, proxy_url, max_request
                     timeout=20
                 )
 
+                # 4. التحقق من النجاح
                 if check_success(resp.status_code, resp.text):
-                    global_success_counter[0] += 1
+                    # ✅ نجاح → نستمر بنفس البروكسي
+                    global_counter[0] += 1
                     local_success += 1
                     consecutive_fail = 0
-                    print(f"[🏆 نجاح] Worker {worker_id} | الطلب {req_num} | {team_name} | {proxy_url[:35]}...")
+                    print(f"[🏆 نجاح] Worker {worker_id} | #{req_num} | {team_name} | {proxy_url[:35]}...")
                 else:
-                    local_fail += 1
+                    # ❌ فشل → نحاول مرة ثانية بنفس البروكسي
                     consecutive_fail += 1
-                    if consecutive_fail >= 2:
-                        print(f"[✘] Worker {worker_id}: البروكسي فشل مرتين متتاليتين | {proxy_url[:35]}")
-                        break
+                    local_fail += 1
+                    print(f"[✘] Worker {worker_id}: فشل إرسال ({consecutive_fail}/2) | {proxy_url[:35]}")
 
             except Exception as e:
-                local_fail += 1
+                # ❌ خطأ → نحاول مرة ثانية بنفس البروكسي
                 consecutive_fail += 1
-                if consecutive_fail >= 2:
-                    print(f"[✘] Worker {worker_id}: البروكسي توقف (خطأ) | {proxy_url[:35]}")
-                    break
+                local_fail += 1
+                print(f"[✘] Worker {worker_id}: خطأ ({consecutive_fail}/2) | {proxy_url[:35]} | {str(e)[:50]}")
 
         session.close()
         print(f"[📊] Worker {worker_id}: نجاح={local_success} | فشل={local_fail} | {proxy_url[:35]}")
@@ -297,8 +322,9 @@ async def send_requests_with_proxy(worker_id, names_list, proxy_url, max_request
 # ==========================================
 async def main():
     print("=" * 60)
-    print("--- سكربت قوة أسد (بروكسيات عالمية + تثبيت البروكسي الناجح) ---")
+    print("--- سكربت قوة أسد (بروكسيات عربية + تثبيت البروكسي الناجح) ---")
     print("=" * 60)
+    print(f"[🌍] الدول المستهدفة: {', '.join(ARAB_COUNTRY_NAMES.values())}")
 
     # التحقق من curl_cffi
     try:
@@ -313,34 +339,38 @@ async def main():
 
     names_list = load_names_from_file("names.txt")
 
-    for round_num in range(1, 7335775):
+    for round_num in range(1, 7):  # 6 دورات فقط
         print(f"\n{'='*50}")
         print(f"--- الدورة {round_num} من 6 ---")
         print(f"{'='*50}")
 
-        print("[🌐] جلب بروكسيات من كل الدول...")
-        raw_proxies = fetch_proxies(max_per_source=50)
+        print("[🌐] جلب بروكسيات عربية...")
+        raw_proxies = fetch_arab_proxies(max_per_source=50)
 
         if not raw_proxies:
-            print("[✘] لا يوجد بروكسيات متاحة!")
+            print("[✘] لا يوجد بروكسيات عربية متاحة!")
             return
 
-        working_proxies = test_proxies(raw_proxies, max_workers=40, min_working=10)
+        # نجمع 15 بروكسي عربي عامل على الأقل
+        working_proxies = test_arab_proxies(raw_proxies, max_workers=40, min_working=15)
 
         if not working_proxies:
-            print("[✘] لا يوجد بروكسي عامل حالياً!")
+            print("[✘] لا يوجد بروكسي عربي عامل حالياً!")
             return
 
-        print("\n[⏱️] بدء إرسال الطلبات... كل Worker يستخدم بروكسي واحد حتى الفشل")
-        semaphore = asyncio.Semaphore(10)  # عدد الـ Workers المتزامنين
+        print(f"\n[⏱️] بدء إرسال الطلبات... كل Worker = بروكسي واحد (يستمر حتى الفشل×2)")
         
-        # كل بروكسي يرسل حتى 10 طلبات (أو حتى يفشل مرتين)
-        max_requests_per_proxy = 10
+        # كل بروكسي = Worker واحد
+        # Semaphore = عدد البروكسيات العاملة (كلهم يشتغلون مع بعض)
+        semaphore = asyncio.Semaphore(len(working_proxies))
+        
+        # كل بروكسي يرسل حتى 20 طلب (أو حتى يفشل مرتين متتاليتين)
+        max_requests_per_proxy = 20
         
         global_success = [0]  # mutable counter
         
         tasks = [
-            send_requests_with_proxy(
+            worker_send_requests(
                 i+1, names_list, proxy, max_requests_per_proxy, semaphore, global_success
             ) 
             for i, proxy in enumerate(working_proxies)
