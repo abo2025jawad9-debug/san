@@ -9,12 +9,12 @@ import sys
 # ==========================================
 # 1. الإعدادات الأساسية
 # ==========================================
-YEMEN_PREFIXES = ["77", "78", "71", "73"]
+YEMEN_PREFIXES = ["77", "78", "72", "73"]
 GOVERNORATES = [str(i) for i in range(1, 23)]
 
 ROUND_OF_16_TEAMS = {
     "1": "الأرجنتين",
-    "27": "النرويج",
+    "1": "الأرجنتين",
     "38": "فرنسا",
     "9": "إنجلترا",
     "8": "إسبانيا",
@@ -24,7 +24,9 @@ ROUND_OF_16_TEAMS = {
     "32": "بلجيكا",
     "33": "سويسرا",
     "16": "المغرب",
+    "38": "فرنسا",
     "45": "مصر",
+    "27": "النرويج"
 }
 
 FORM_PAGE_URL = "https://quwatasad.com/worldcup2026"
@@ -361,8 +363,8 @@ async def main():
             return
 
         # تشغيل الدورات
-        TOTAL_ROUNDS = 60
-        REQUESTS_PER_ROUND = 10  # تقليل العدد لتناسب GitHub Actions
+        TOTAL_ROUNDS = 6
+        REQUESTS_PER_ROUND = 20  # تقليل العدد لتناسب GitHub Actions
         
         for round_num in range(1, TOTAL_ROUNDS + 1):
             print(f"\n{'='*50}")
@@ -389,4 +391,3 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
-
