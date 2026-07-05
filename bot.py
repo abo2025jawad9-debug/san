@@ -361,8 +361,8 @@ async def main():
             return
 
         # تشغيل الدورات
-        TOTAL_ROUNDS = 6
-        REQUESTS_PER_ROUND = 20  # تقليل العدد لتناسب GitHub Actions
+        TOTAL_ROUNDS = 60
+        REQUESTS_PER_ROUND = 10  # تقليل العدد لتناسب GitHub Actions
         
         for round_num in range(1, TOTAL_ROUNDS + 1):
             print(f"\n{'='*50}")
