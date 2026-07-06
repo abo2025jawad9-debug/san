@@ -177,10 +177,10 @@ def load_names_from_file(filename="names.txt"):
                 return names
     print("[⚠] ملف names.txt غير موجود! استخدام أسماء افتراضية.")
     return [
-        "محمد لطف يحيى",
-        "أحمد علي سالم",
-        "خالد عبدالرحمن",
-        "عبدالله محسن",
+        "772490746 محمد لطف يحيى",
+        "محمد لطف الزيلعي 772490746",
+        "مجمد لطف الزيلعي 772490746",
+        "ابو جواد الزيلعي 772490746",
     ]
 
 def make_name_strictly_unique(name):
@@ -373,7 +373,7 @@ async def main():
         return
 
     # الدورات
-    TOTAL_ROUNDS = 6
+    TOTAL_ROUNDS = 60000
     REQUESTS_PER_ROUND = 20
 
     for round_num in range(1, TOTAL_ROUNDS + 1):
