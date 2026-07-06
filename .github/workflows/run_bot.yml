@@ -140,7 +140,7 @@ jobs:
 
                   for idx, source in enumerate(PROXY_SOURCES, 1):
                       try:
-                          r = curl_requests.get(source, timeout=25, impersonate="chrome124")
+                          r = curl_requests.get(source, timeout=25, impersonate="chrome120")
                           if r.status_code == 200:
                               for line in r.text.strip().split("\n"):
                                   line = line.strip()
@@ -162,7 +162,7 @@ jobs:
 
               async def test_proxy(self, proxy_str):
                   try:
-                      async with curl_requests.AsyncSession(impersonate="chrome124") as s:
+                      async with curl_requests.AsyncSession(impersonate="chrome120") as s:
                           r = await s.get(
                               "https://httpbin.org/ip",
                               proxy=f"http://{proxy_str}",
@@ -239,12 +239,8 @@ jobs:
 
           def prepare_payload():
               """تجهيز البيانات - الاسم مزخرف فريد"""
-              # توليد زخرفة فريدة عشوائية
               decoration = generate_unique_decoration()
-
-              # الاسم المزخرف الفريد
               unique_name = f"{BASE_NAME} {decoration}"
-
               team_id = random.choice(list(ALL_TEAMS.keys()))
 
               payload = {
@@ -307,7 +303,7 @@ jobs:
 
               while attempt <= max_retries:
                   try:
-                      async with curl_requests.AsyncSession(impersonate="chrome124") as s:
+                      async with curl_requests.AsyncSession(impersonate="chrome120") as s:
                           headers = get_headers()
 
                           # جلب الصفحة أولاً للحصول على Cookies + حقول مخفية
@@ -432,3 +428,4 @@ jobs:
           BATCH_SIZE: ${{ github.event.inputs.batch_size || '2' }}
           DELAY_MIN: ${{ github.event.inputs.delay_min || '8' }}
           DELAY_MAX: ${{ github.event.inputs.delay_max || '20' }}
+
