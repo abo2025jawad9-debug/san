@@ -9,9 +9,10 @@ import sys
 # ==========================================
 # 1. الإعدادات
 # ==========================================
-YEMEN_PREFIXES = ["77", "78", "72", "73"]
+YEMEN_PREFIXES = ["77", "78", "72", "73", "70", "71"]
 GOVERNORATES = [str(i) for i in range(1, 23)]
 
+# قائمة الفرق كما هي (12 فريقاً) - يمكن توسيعها
 ROUND_OF_16_TEAMS = {
     "1": "الأرجنتين",
     "12": "البرازيل",
@@ -31,9 +32,19 @@ FORM_PAGE_URL = "https://quwatasad.com/worldcup2026"
 TARGET_URL = "https://quwatasad.com/form-submit"
 
 HEADERS = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
     "Referer": FORM_PAGE_URL,
+    "Origin": "https://quwatasad.com",
     "Accept-Language": "ar,en-US;q=0.9,en;q=0.8",
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+    "Accept-Encoding": "gzip, deflate, br",
+    "DNT": "1",
+    "Connection": "keep-alive",
+    "Upgrade-Insecure-Requests": "1",
+    "Sec-Fetch-Dest": "document",
+    "Sec-Fetch-Mode": "navigate",
+    "Sec-Fetch-Site": "same-origin",
+    "Sec-Fetch-User": "?1",
 }
 
 PROXY_SOURCES = [
@@ -58,6 +69,7 @@ class ProxyManager:
         self.current_index = 0
         self.fail_counts = {}
         self.success_counts = {}
+        self.current_proxy = None
 
     def fetch_proxies(self):
         """جلب البروكسيات باستخدام curl_cffi (sync)"""
@@ -66,7 +78,7 @@ class ProxyManager:
 
         for idx, source in enumerate(PROXY_SOURCES, 1):
             try:
-                r = curl_requests.get(source, headers=HEADERS, timeout=25, verify=False)
+                r = curl_requests.get(source, headers=HEADERS, timeout=25)
                 print(f"[ℹ] المصدر {idx} - كود: {r.status_code}")
                 if r.status_code == 200:
                     source_proxies = set()
@@ -95,18 +107,14 @@ class ProxyManager:
     async def test_proxy(self, proxy_str):
         """اختبار البروكسي على الموقع المستهدف"""
         try:
-            async with curl_requests.AsyncSession(impersonate="chrome120") as s:
+            async with curl_requests.AsyncSession(impersonate="chrome124") as s:
                 r = await s.get(
                     FORM_PAGE_URL,
                     proxy=f"http://{proxy_str}",
                     headers=HEADERS,
                     timeout=10,
                 )
-                if r.status_code == 200:
-                    soup = BeautifulSoup(r.text, "html.parser")
-                    token = soup.find("input", {"name": "_token"})
-                    if token and token.get("value"):
-                        return True
+                return r.status_code == 200
         except Exception:
             pass
         return False
@@ -177,10 +185,10 @@ def load_names_from_file(filename="names.txt"):
                 return names
     print("[⚠] ملف names.txt غير موجود! استخدام أسماء افتراضية.")
     return [
-        "772490746 محمد لطف يحيى",
-        "محمد لطف الزيلعي 772490746",
-        "مجمد لطف الزيلعي 772490746",
-        "ابو جواد الزيلعي 772490746",
+        "محمد أحمد عبدالله علي",
+        "أحمد محمد سعيد محسن",
+        "عبدالله علي محمد أحمد",
+        "خالد سعيد عبدالرحمن علي",
     ]
 
 def make_name_strictly_unique(name):
@@ -206,104 +214,47 @@ def generate_random_phone():
     return f"{prefix}{suffix}"
 
 # ==========================================
-# 4. جلب التوكن
+# 4. تجهيز الحمولة (بدون توكن - لا يوجد CSRF)
 # ==========================================
-async def fetch_live_form_data(proxy_manager):
-    print("[⌛] جاري جلب التوكن...")
-
-    # محاولة بدون بروكسي
-    print("[⌛] محاولة 1/1: جلب التوكن بدون بروكسي...")
-    try:
-        async with curl_requests.AsyncSession(impersonate="chrome120") as s:
-            r = await s.get(FORM_PAGE_URL, headers=HEADERS, timeout=15)
-            print(f"[ℹ] بدون بروكسي - كود: {r.status_code}")
-            if r.status_code == 200:
-                soup = BeautifulSoup(r.text, "html.parser")
-                token = soup.find("input", {"name": "_token"})
-                if token and token.get("value"):
-                    print("[✔] جلب التوكن نجح بدون بروكسي!")
-                    return {
-                        "_token": token.get("value"),
-                        "date": "2026-07-06",
-                        "section_id": "0",
-                        "TopicID": "152",
-                        "WebmasterSectionId": "",
-                    }
-                else:
-                    print("[⚠] التوكن غير موجود (بدون بروكسي)")
-    except Exception as e:
-        print(f"[✘] فشل بدون بروكسي: {str(e)[:80]}")
-
-    # محاولة بالبروكسيات
-    print("[⌛] محاولة بالبروكسيات...")
-    for attempt in range(1, 8):
-        proxy = proxy_manager.get_next_proxy()
-        if not proxy:
-            print("[✘] لا يوجد بروكسي متاح!")
-            break
-
-        print(f"[⌛] محاولة {attempt}/7 عبر: {proxy}")
-        try:
-            async with curl_requests.AsyncSession(impersonate="chrome120") as s:
-                r = await s.get(
-                    FORM_PAGE_URL, headers=HEADERS,
-                    proxy=f"http://{proxy}", timeout=15
-                )
-                print(f"[ℹ] {proxy} - كود: {r.status_code}")
-                if r.status_code == 200:
-                    soup = BeautifulSoup(r.text, "html.parser")
-                    token = soup.find("input", {"name": "_token"})
-                    if token and token.get("value"):
-                        print(f"[✔] جلب التوكن نجح عبر: {proxy}")
-                        proxy_manager.report_success(proxy)
-                        return {
-                            "_token": token.get("value"),
-                            "date": "2026-07-06",
-                            "section_id": "0",
-                            "TopicID": "152",
-                            "WebmasterSectionId": "",
-                        }
-                    else:
-                        print(f"[⚠] التوكن غير موجود (بروكسي: {proxy})")
-                        proxy_manager.report_failure(proxy)
-                else:
-                    print(f"[⚠] كود {r.status_code} من {proxy}")
-                    proxy_manager.report_failure(proxy)
-        except Exception as e:
-            print(f"[✘] فشل البروكسي {proxy}: {str(e)[:80]}")
-            proxy_manager.report_failure(proxy)
-
-        await asyncio.sleep(1)
-
-    print("[🛑] فشل جلب التوكن نهائياً!")
-    return None
-
-# ==========================================
-# 5. تجهيز الحمولة
-# ==========================================
-def prepare_payload(live_fields, names_list):
+def prepare_payload(names_list):
     raw_name = random.choice(names_list)
     unique_name = make_name_strictly_unique(raw_name)
     team_id = random.choice(list(ROUND_OF_16_TEAMS.keys()))
     team_name = ROUND_OF_16_TEAMS[team_id]
-    payload = live_fields.copy()
-    payload.update({
-        "customField_18": team_id,
-        "customField_19": unique_name,
-        "customField_20": generate_random_phone(),
-        "customField_24": random.choice(GOVERNORATES),
-    })
+
+    # الحقول المطلوبة فقط - 4 حقول
+    payload = {
+        "customField_18": team_id,           # بطل كأس العالم
+        "customField_19": unique_name,       # الاسم الرباعي
+        "customField_20": generate_random_phone(),  # رقم الجوال
+        "customField_24": random.choice(GOVERNORATES),  # المحافظة
+    }
     return payload, team_name
 
 def check_success(status, html):
-    keywords = ["شكرا", "تم بنجاح", "success", "thank", "شكراً"]
-    return (status == 200 or any(k in html.lower() for k in keywords))
+    """التحقق من نجاح الإرسال"""
+    if status != 200:
+        return False
+
+    # كلمات مفتاحية للنجاح
+    success_keywords = ["شكرا", "تم بنجاح", "success", "thank", "شكراً", 
+                        "تم الإرسال", "تمت المشاركة", "نجاح"]
+
+    # كلمات مفتاحية للفشل
+    fail_keywords = ["خطأ", "error", "فشل", "invalid", "مطلوب", "required"]
+
+    html_lower = html.lower()
+
+    has_success = any(k in html_lower for k in success_keywords)
+    has_fail = any(k in html_lower for k in fail_keywords)
+
+    return has_success or not has_fail
 
 # ==========================================
-# 6. إرسال الطلب
+# 5. إرسال الطلب
 # ==========================================
-async def send_request(request_num, live_fields, names_list, proxy_manager):
-    payload, team_name = prepare_payload(live_fields, names_list)
+async def send_request(request_num, names_list, proxy_manager):
+    payload, team_name = prepare_payload(names_list)
     proxy = proxy_manager.get_next_proxy()
     if not proxy:
         print(f"[✘] لا يوجد بروكسي!")
@@ -315,17 +266,22 @@ async def send_request(request_num, live_fields, names_list, proxy_manager):
 
     while attempt < max_retries:
         try:
-            async with curl_requests.AsyncSession(impersonate="chrome120") as s:
+            async with curl_requests.AsyncSession(impersonate="chrome124") as s:
+                # إرسال كـ multipart/form-data (مطابق للنموذج الأصلي)
                 r = await s.post(
-                    TARGET_URL, data=payload, headers=HEADERS,
-                    proxy=f"http://{current_proxy}", timeout=15
+                    TARGET_URL, 
+                    data=payload,  # curl_cffi يتعامل مع الترميز تلقائياً
+                    headers=HEADERS,
+                    proxy=f"http://{current_proxy}", 
+                    timeout=15
                 )
+
                 if check_success(r.status_code, r.text):
                     proxy_manager.report_success(current_proxy)
-                    print(f"[🏆] #{request_num:02d} | {current_proxy} | {team_name} | نجاح")
+                    print(f"[🏆] #{request_num:02d} | {current_proxy} | {team_name} | نجاح (كود: {r.status_code})")
                     return True
                 else:
-                    print(f"[⚠] #{request_num:02d} | {current_proxy} | كود: {r.status_code}")
+                    print(f"[⚠] #{request_num:02d} | {current_proxy} | كود: {r.status_code} | رد غير متوقع")
                     new_proxy = proxy_manager.report_failure(current_proxy)
                     if new_proxy != current_proxy:
                         current_proxy = new_proxy
@@ -334,7 +290,7 @@ async def send_request(request_num, live_fields, names_list, proxy_manager):
                         continue
                     return False
         except Exception as e:
-            print(f"[✘] #{request_num:02d} | {current_proxy} | {str(e)[:60]}")
+            print(f"[✘] #{request_num:02d} | {current_proxy} | {str(e)[:80]}")
             new_proxy = proxy_manager.report_failure(current_proxy)
             if new_proxy != current_proxy:
                 current_proxy = new_proxy
@@ -345,11 +301,11 @@ async def send_request(request_num, live_fields, names_list, proxy_manager):
     return False
 
 # ==========================================
-# 7. الدالة الرئيسية
+# 6. الدالة الرئيسية
 # ==========================================
 async def main():
     print("=" * 60)
-    print("--- Vote Bot - curl_cffi Edition ---")
+    print("--- Vote Bot - Fixed Edition (No CSRF) ---")
     print("=" * 60)
 
     names_list = load_names_from_file("names.txt")
@@ -366,12 +322,6 @@ async def main():
     if not proxy_manager.proxies:
         print("[⚠] لا توجد بروكسيات عاملة! سأحاول بدون بروكسي...")
 
-    # جلب التوكن
-    live_fields = await fetch_live_form_data(proxy_manager)
-    if not live_fields:
-        print("[🛑] توقف السكربت: فشل جلب التوكن.")
-        return
-
     # الدورات
     TOTAL_ROUNDS = 60000
     REQUESTS_PER_ROUND = 20
@@ -382,7 +332,7 @@ async def main():
         print(f"{'='*50}")
 
         tasks = [
-            send_request(i, live_fields, names_list, proxy_manager)
+            send_request(i, names_list, proxy_manager)
             for i in range(1, REQUESTS_PER_ROUND + 1)
         ]
         results = await asyncio.gather(*tasks)
