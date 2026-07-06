@@ -18,7 +18,7 @@ DELAY_MAX = int(os.getenv('DELAY_MAX', '20'))
 # الاسم الثابت
 BASE_NAME = "محمد لطف يحيى 772490746"
 
-YEMEN_PREFIXES = ["77", "78", "72", "73", "70", "71"]
+YEMEN_PREFIXES = ["77", "78", "77", "73", "70", "71"]
 GOVERNORATES = [str(i) for i in range(1, 23)]
 
 ALL_TEAMS = {
