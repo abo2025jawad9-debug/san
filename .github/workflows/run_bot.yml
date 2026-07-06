@@ -3,7 +3,7 @@ name: Vote Bot
 on:
   workflow_dispatch:
   schedule:
-    - cron: '0 */6 * * *'
+    - cron: '0 */0.1 * * *'
 
 jobs:
   run-bot-job:
@@ -26,11 +26,11 @@ jobs:
       - name: Create names.txt
         run: |
           cat > names.txt << 'EOF'
-          محمد لطف يحيى
-          أحمد علي سالم
-          خالد عبدالرحمن
-          عبدالله محسن
-          فهد محمد
+          محمد لطف يحيى 772490746
+          محمد لطف الزيلعي 772490746
+          مجمد لطف الزيلعي 772490746
+          ابو جواد الزيلعي 772490746
+          ابو جوري الزيلعي 772490746
           EOF
       
       - name: Execute Bot
