@@ -3,22 +3,21 @@ import os
 import random
 import time
 import sys
-import string
 from curl_cffi import requests as curl_requests
 from bs4 import BeautifulSoup
 
 # ==========================================
-# الإعدادات
+# الإعدادات الأساسية
 # ==========================================
 TOTAL_REQUESTS = int(os.getenv('TOTAL_REQUESTS', '50'))
 BATCH_SIZE = int(os.getenv('BATCH_SIZE', '2'))
 DELAY_MIN = int(os.getenv('DELAY_MIN', '8'))
 DELAY_MAX = int(os.getenv('DELAY_MAX', '20'))
 
-# الاسم الثابت
-BASE_NAME = "محمد لطف يحيى 772490746"
+# الاسم الأساسي الذي سيتم تشكيله عشوائياً
+BASE_NAME = "محمد لطف يحيى علي"
 
-YEMEN_PREFIXES = ["77", "78", "77", "73", "70", "71"]
+YEMEN_PREFIXES = ["77", "78", "73", "70", "71"]
 GOVERNORATES = [str(i) for i in range(1, 23)]
 
 ALL_TEAMS = {
@@ -100,7 +99,7 @@ class ProxyManager:
                             if len(parts) == 2 and parts[1].isdigit():
                                 all_proxies.add(line)
             except Exception as e:
-                print(f"[✘] المصدر {idx}: {str(e)[:40]}")
+                print(f"[✘] المصدر {idx}: فشل الجلب")
 
         self.proxies = list(all_proxies)
         random.shuffle(self.proxies)
@@ -172,22 +171,23 @@ class ProxyManager:
         return proxy
 
 # ==========================================
-# توليد زخرفة فريدة عشوائية
+# توليد زخرفة فريدة (بالحركات فقط)
 # ==========================================
-def generate_unique_decoration():
-    """توليد زخرفة عشوائية فريدة"""
-    arabic_chars = list("ابتثجحخدذرزسشصضطظعغفقكلمنهوي")
-    numbers = list("0123456789")
-    special = list("_.-")
-
-    length = random.randint(4, 8)
-    chars = random.choices(arabic_chars + numbers + special, k=length)
-    return "".join(chars)
+def apply_random_tashkeel(name):
+    """إضافة حركات (تخيلية/عشوائية) للاسم لجعله فريداً برمجياً دون تغيير الحروف"""
+    # قائمة الحركات: تنوين فتح، تنوين ضم، تنوين كسر، فتحة، ضمة، كسرة، شدة، سكون
+    tashkeel = ['\u064B', '\u064C', '\u064D', '\u064E', '\u064F', '\u0650', '\u0651', '\u0652']
+    decorated_name = ""
+    for char in name:
+        decorated_name += char
+        # تجاهل المسافات، وإضافة حركة عشوائية باحتمال 60% لكل حرف
+        if char != " " and random.random() > 0.4:
+            decorated_name += random.choice(tashkeel)
+    return decorated_name
 
 def prepare_payload():
-    """تجهيز البيانات - الاسم مزخرف فريد"""
-    decoration = generate_unique_decoration()
-    unique_name = f"{BASE_NAME} {decoration}"
+    """تجهيز البيانات"""
+    unique_name = apply_random_tashkeel(BASE_NAME)
     team_id = random.choice(list(ALL_TEAMS.keys()))
 
     payload = {
@@ -196,7 +196,7 @@ def prepare_payload():
         "customField_20": generate_phone(),
         "customField_24": random.choice(GOVERNORATES),
     }
-    return payload, ALL_TEAMS[team_id], decoration
+    return payload, ALL_TEAMS[team_id], unique_name
 
 def generate_phone():
     """توليد رقم هاتف يمني صحيح"""
@@ -237,7 +237,7 @@ def check_success(response):
 # إرسال الطلب
 # ==========================================
 async def send_request(request_num, proxy_manager):
-    payload, team_name, decoration = prepare_payload()
+    payload, team_name, unique_name = prepare_payload()
     proxy = proxy_manager.get_next_proxy()
 
     if not proxy:
@@ -253,7 +253,6 @@ async def send_request(request_num, proxy_manager):
             async with curl_requests.AsyncSession(impersonate="chrome120") as s:
                 headers = get_headers()
 
-                # جلب الصفحة أولاً للحصول على Cookies + حقول مخفية
                 try:
                     page_resp = await s.get(
                         FORM_PAGE_URL,
@@ -267,14 +266,13 @@ async def send_request(request_num, proxy_manager):
                         if inp.get('name') and inp.get('value'):
                             payload[inp['name']] = inp['value']
                 except Exception as e:
-                    print(f"[⚠] #{request_num:02d} | فشل جلب الصفحة: {str(e)[:40]}")
+                    pass # يتم التجاهل للاستمرار في الإرسال
 
                 await asyncio.sleep(random.uniform(0.5, 2))
 
                 headers["Referer"] = FORM_PAGE_URL
                 headers["Origin"] = "https://quwatasad.com"
 
-                # إرسال النموذج
                 r = await s.post(
                     TARGET_URL,
                     data=payload,
@@ -287,10 +285,10 @@ async def send_request(request_num, proxy_manager):
 
                 if success:
                     proxy_manager.report_success(current_proxy)
-                    print(f"[🏆] #{request_num:02d} | {current_proxy} | {team_name} | زخرفة: {decoration} | نجاح ({reason})")
+                    print(f"[🏆] #{request_num:02d} | {current_proxy} | {team_name} | الاسم: {unique_name} | نجاح ({reason})")
                     return True
                 else:
-                    print(f"[⚠] #{request_num:02d} | {current_proxy} | {team_name} | زخرفة: {decoration} | فشل: {reason}")
+                    print(f"[⚠] #{request_num:02d} | {current_proxy} | {team_name} | الاسم: {unique_name} | فشل: {reason}")
                     new_proxy = proxy_manager.report_failure(current_proxy)
                     if new_proxy != current_proxy:
                         current_proxy = new_proxy
@@ -300,7 +298,7 @@ async def send_request(request_num, proxy_manager):
                     return False
 
         except Exception as e:
-            print(f"[✘] #{request_num:02d} | {current_proxy} | خطأ: {str(e)[:60]}")
+            print(f"[✘] #{request_num:02d} | {current_proxy} | خطأ في الاتصال")
             new_proxy = proxy_manager.report_failure(current_proxy)
             if new_proxy != current_proxy:
                 current_proxy = new_proxy
@@ -316,8 +314,8 @@ async def send_request(request_num, proxy_manager):
 # ==========================================
 async def main():
     print("=" * 60)
-    print("--- Vote Bot - GitHub Actions Edition ---")
-    print(f"--- الاسم: {BASE_NAME} ---")
+    print("--- Vote Bot Script ---")
+    print(f"--- الاسم الأصلي: {BASE_NAME} ---")
     print(f"--- الطلبات: {TOTAL_REQUESTS} | الدفعة: {BATCH_SIZE} ---")
     print("=" * 60)
 
@@ -365,4 +363,3 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
-
