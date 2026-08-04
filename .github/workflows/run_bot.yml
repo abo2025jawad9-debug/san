@@ -1,239 +1,39 @@
-name: Vote Bot
+name: Bot Automation # هذا مجرد عنوان للمهمة في قيتهاب
 
 on:
-  workflow_dispatch:
-    inputs:
-      total_requests:
-        description: 'عدد الطلبات الإجمالي'
-        required: false
-        default: '50'
-        type: string
-      batch_size:
-        description: 'عدد الطلبات المتزامنة (1-5)'
-        required: false
-        default: '2'
-        type: string
-      delay_min:
-        description: 'التأخير الأدنى بين الدفعات (ثوانٍ)'
-        required: false
-        default: '8'
-        type: string
-      delay_max:
-        description: 'التأخير الأقصى بين الدفعات (ثوانٍ)'
-        required: false
-        default: '20'
-        type: string
+  schedule:
+    # يعمل عند الدقيقة 0 من كل 6 ساعات
+    - cron: '0 */7 * * *'
+  workflow_dispatch: # زر للتشغيل اليدوي
+
+permissions:
+  contents: write # صلاحية ضرورية لرفع ملف sh.json
 
 jobs:
-  run-bot-job:
+  run-bot:
     runs-on: ubuntu-latest
-    timeout-minutes: 360
 
     steps:
-      - name: Checkout Repository
+      - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
+          python-version: '3.10'
 
-      - name: Install System Dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libcurl4-openssl-dev libssl-dev
-
-      - name: Install Python Dependencies
+      - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install curl_cffi==0.6.4 beautifulsoup4==4.12.3 lxml==5.2.2
+          pip install -r requirements.txt
 
-      - name: Create bot.py
-        run: |
-          cat > bot.py << 'PYEOF'
-          import asyncio
-          import os
-          import random
-          import time
-          from curl_cffi import requests as curl_requests
-          from bs4 import BeautifulSoup
-
-          TOTAL_REQUESTS = int(os.getenv('TOTAL_REQUESTS', '50'))
-          BATCH_SIZE = int(os.getenv('BATCH_SIZE', '2'))
-          DELAY_MIN = int(os.getenv('DELAY_MIN', '8'))
-          DELAY_MAX = int(os.getenv('DELAY_MAX', '20'))
-
-          BASE_NAME = "محمد لطف يحيى 772490746"
-
-          YEMEN_PREFIXES = ["77", "78", "73", "70", "71"]
-          GOVERNORATES = [str(i) for i in range(1, 23)]
-
-          ALL_TEAMS = {
-              "1": "الأرجنتين",
-              "45": "مصر",
-              "24": "المغرب",
-              "9": "إنجلترا",
-              "8": "إسبانيا",
-              "27": "النرويج",
-              "32": "بلجيكا",
-              "38": "فرنسا"
-          }
-
-          FORM_PAGE_URL = "https://quwatasad.com/worldcup2026"
-          TARGET_URL = "https://quwatasad.com/form-submit"
-
-          USER_AGENTS = [
-              "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
-              "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
-              "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:127.0) Gecko/20100101 Firefox/127.0",
-          ]
-
-          def get_headers():
-              return {
-                  "User-Agent": random.choice(USER_AGENTS),
-                  "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-                  "Accept-Language": "ar-YE,ar;q=0.9,en-US;q=0.8,en;q=0.7",
-                  "Connection": "keep-alive",
-              }
-
-          PROXY_SOURCES = [
-              "https://raw.githubusercontent.com/Thordata/awesome-free-proxy-list/main/proxies/http.txt",
-              "https://raw.githubusercontent.com/VPSLabCloud/VPSLab-Free-Proxy-List/main/http_all.txt",
-          ]
-
-          class ProxyManager:
-              def __init__(self):
-                  self.proxies = []
-                  self.current_index = 0
-
-              def fetch_proxies(self):
-                  all_proxies = set()
-                  for source in PROXY_SOURCES:
-                      try:
-                          r = curl_requests.get(source, timeout=15, impersonate="chrome120")
-                          if r.status_code == 200:
-                              for line in r.text.strip().split("\n"):
-                                  line = line.strip()
-                                  if line and ":" in line and not line.startswith("#"):
-                                      if line.startswith("http://"): line = line[7:]
-                                      elif line.startswith("https://"): line = line[8:]
-                                      if len(line.split(":")) == 2:
-                                          all_proxies.add(line)
-                      except:
-                          pass
-                  self.proxies = list(all_proxies)
-                  random.shuffle(self.proxies)
-                  return len(self.proxies) > 0
-
-              async def filter_working_proxies(self):
-                  working = []
-                  for proxy in self.proxies[:20]:
-                      try:
-                          async with curl_requests.AsyncSession(impersonate="chrome120") as s:
-                              r = await s.get("https://httpbin.org/ip", proxy=f"http://{proxy}", timeout=10)
-                              if r.status_code == 200:
-                                  working.append(proxy)
-                      except:
-                          pass
-                  self.proxies = working
-                  return len(working) > 0
-
-              def get_next_proxy(self):
-                  if not self.proxies: return None
-                  proxy = self.proxies[self.current_index]
-                  self.current_index = (self.current_index + 1) % len(self.proxies)
-                  return proxy
-
-          def apply_random_tashkeel(name):
-              tashkeel = ['\u064B', '\u064C', '\u064D', '\u064E', '\u064F', '\u0650', '\u0651', '\u0652']
-              decorated = ""
-              for char in name:
-                  decorated += char
-                  if char != " " and random.random() > 0.4:
-                      decorated += random.choice(tashkeel)
-              return decorated
-
-          def prepare_payload():
-              unique_name = apply_random_tashkeel(BASE_NAME)
-              team_id = random.choice(list(ALL_TEAMS.keys()))
-              phone = f"{random.choice(YEMEN_PREFIXES)}{''.join([str(random.randint(0, 9)) for _ in range(7)])}"
-              return {
-                  "customField_18": team_id,
-                  "customField_19": unique_name,
-                  "customField_20": phone,
-                  "customField_24": random.choice(GOVERNORATES),
-              }, ALL_TEAMS[team_id], unique_name
-
-          async def send_request(request_num, proxy_manager):
-              payload, team_name, unique_name = prepare_payload()
-              proxy = proxy_manager.get_next_proxy()
-              if not proxy: return False
-              
-              try:
-                  async with curl_requests.AsyncSession(impersonate="chrome120") as s:
-                      headers = get_headers()
-                      try:
-                          page_resp = await s.get(FORM_PAGE_URL, proxy=f"http://{proxy}", headers=headers, timeout=15)
-                          soup = BeautifulSoup(page_resp.text, 'html.parser')
-                          for inp in soup.find_all('input', type='hidden'):
-                              if inp.get('name') and inp.get('value'):
-                                  payload[inp['name']] = inp['value']
-                      except:
-                          pass
-                      
-                      await asyncio.sleep(random.uniform(0.5, 2))
-                      headers["Referer"] = FORM_PAGE_URL
-                      headers["Origin"] = "https://quwatasad.com"
-                      
-                      r = await s.post(TARGET_URL, data=payload, headers=headers, proxy=f"http://{proxy}", timeout=20)
-                      
-                      if "تم بنجاح" in r.text or "success" in r.text.lower() or r.status_code == 200:
-                          print(f"[🏆] #{request_num:02d} | {team_name} | {unique_name} | نجاح")
-                          return True
-                      else:
-                          print(f"[⚠] #{request_num:02d} | {team_name} | {unique_name} | فشل")
-                          return False
-              except:
-                  print(f"[✘] #{request_num:02d} | خطأ اتصال")
-                  return False
-
-          async def main():
-              print("="*50)
-              print(f"--- Vote Bot | {BASE_NAME} ---")
-              print("="*50)
-              
-              pm = ProxyManager()
-              pm.fetch_proxies()
-              await pm.filter_working_proxies()
-              
-              if not pm.proxies:
-                  print("[⚠] لا توجد بروكسيات!")
-                  return
-                  
-              completed = 0
-              successful = 0
-              
-              while completed < TOTAL_REQUESTS:
-                  batch = min(BATCH_SIZE, TOTAL_REQUESTS - completed)
-                  tasks = [send_request(completed + i + 1, pm) for i in range(batch)]
-                  results = await asyncio.gather(*tasks)
-                  
-                  successful += sum(1 for r in results if r)
-                  completed += batch
-                  print(f"[📊] تم: {completed}/{TOTAL_REQUESTS} | النجاح: {successful}")
-                  
-                  if completed < TOTAL_REQUESTS:
-                      await asyncio.sleep(random.randint(DELAY_MIN, DELAY_MAX))
-
-          if __name__ == "__main__":
-              asyncio.run(main())
-          PYEOF
-
-      - name: Execute Bot
-        run: python bot.py
+      - name: Run Trading Bot
+        # تم تصحيح الأسماء لتتطابق تماماً مع ما هو موجود في إعدادات مستودعك
         env:
-          PYTHONUNBUFFERED: "1"
-          TOTAL_REQUESTS: ${{ github.event.inputs.total_requests || '50' }}
-          BATCH_SIZE: ${{ github.event.inputs.batch_size || '2' }}
-          DELAY_MIN: ${{ github.event.inputs.delay_min || '8' }}
-          DELAY_MAX: ${{ github.event.inputs.delay_max || '20' }}
+          BYBIT_API_KEY: ${{ secrets.BYBIT_API_KEY }}
+          BYBIT_API_SECRET: ${{ secrets.BYBIT_API_SECRET }}
+          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: python -u bot.py
