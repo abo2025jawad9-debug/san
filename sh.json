@@ -1,0 +1,19 @@
+{
+    "buy_c22a286f": {
+        "type": "buy",
+        "status": "معلقة - جاري الانتظار",
+        "date": "2026-08-06",
+        "time": "02:14:14.453050",
+        "buy_time": "2026-08-06T02:14:14.453050",
+        "buy_price": 56.49,
+        "qty": 0.127,
+        "sellable_qty": 0.126873,
+        "buy_amount_usd": 7.2,
+        "buy_fee_usd": 0.0072,
+        "buy_cost": 7.1742,
+        "total_cost": 7.1886,
+        "break_even_price": 56.6,
+        "min_sell_price": 57.0,
+        "sell_details": {}
+    }
+}
