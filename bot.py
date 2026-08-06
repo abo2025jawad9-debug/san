@@ -39,7 +39,7 @@ MIN_PROFIT_USD = 0.05
 BUY_NEAR_24H_LOW_PCT = 1.0 
 
 # الفارق السعري المطلوب بين كل صفقة والتي تليها (بالدولار)
-PRICE_STEP_USD = 0.5
+PRICE_STEP_USD = 0.4
     
 JSON_FILE = 'sh.json'
 MAX_OPEN_POSITIONS = 2
