@@ -1,18 +1,16 @@
-name: Run Bot
+name: Build Android APK
 
 on:
-  # جدولة التشغيل كل ساعة (يمكنك تغيير التوقيت)
-  schedule:
-    - cron: '0 * * * *'
-  # أو تشغيل يدوي من واجهة Actions
+  push:
+    branches: [ main ]
   workflow_dispatch:
 
 jobs:
-  run-bot:
-    runs-on: ubuntu-latest
+  build:
+    runs-on: ubuntu-22.04
 
     steps:
-      - name: Checkout repository
+      - name: Checkout code
         uses: actions/checkout@v4
 
       - name: Set up Python
@@ -20,22 +18,23 @@ jobs:
         with:
           python-version: '3.10'
 
-      - name: Install dependencies
+      - name: Install system dependencies
         run: |
-          pip install -r requirements.txt
+          sudo apt-get update
+          sudo apt-get install -y git zip unzip openjdk-17-jdk python3-pip autoconf libtool pkg-config zlib1g-dev libncurses5-dev libncursesw5-dev libtinfo5 cmake libffi-dev libssl-dev
 
-      - name: Run bot
-        env:
-          USERNAME: ${{ secrets.USERNAME }}
-          PASSWORD_BASE: ${{ secrets.PASSWORD_BASE }}
-          MAX_ATTEMPTS: ${{ secrets.MAX_ATTEMPTS }}
-        run: python bot.py
-
-      - name: Commit and push updated sh.json (if changed)
+      - name: Install Buildozer and Cython
         run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add sh.json
-          git diff --staged --quiet || git commit -m "Update sh.json from bot run"
-          git push
-        continue-on-error: true
+          pip install --upgrade pip
+          pip install buildozer
+          pip install cython==0.29.33
+
+      - name: Build APK with Buildozer
+        run: |
+          buildozer -v android debug
+
+      - name: Upload APK Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: photototelegram-apk
+          path: bin/*.apk
