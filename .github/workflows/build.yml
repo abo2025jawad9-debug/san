@@ -21,11 +21,7 @@ jobs:
       - name: Install system dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y git zip unzip openjdk-17-jdk python3-pip autoconf libtool pkg-config zlib1g-dev libncurses5-dev libncursesw5-dev libtinfo5 cmake libffi-dev libssl-dev aidl
-
-      - name: Install Apache Ant
-        run: |
-          sudo apt-get install -y ant
+          sudo apt-get install -y git zip unzip openjdk-17-jdk python3-pip autoconf libtool pkg-config zlib1g-dev libncurses5-dev libncursesw5-dev libtinfo5 cmake libffi-dev libssl-dev aidl ant
 
       - name: Install Buildozer and Cython
         run: |
@@ -33,16 +29,19 @@ jobs:
           pip install buildozer
           pip install cython==0.29.33
 
-      # خطوة جديدة: قبول تراخيص Android SDK تلقائياً
-      - name: Accept Android SDK Licenses
+      # الخطوة الجديدة: تثبيت sdkmanager يدوياً في المسار الذي يتوقعه Buildozer
+      - name: Install Android SDK Manager
         run: |
-          mkdir -p $HOME/.buildozer/android/platform/android-sdk/licenses
-          echo -e "\n8933bad161af4b6a5b573652ffc7aaf3aee85a47" > $HOME/.buildozer/android/platform/android-sdk/licenses/android-sdk-license
-          echo -e "\nd56f5187479451eabf01fb78af6dfcb131b33910" > $HOME/.buildozer/android/platform/android-sdk/licenses/android-sdk-preview-license
+          mkdir -p $HOME/.buildozer/android/platform/android-sdk/tools/bin
+          cd $HOME/.buildozer/android/platform/android-sdk/tools/bin
+          curl -L -O -C - https://dl.google.com/android/repository/sdk-tools-linux-4333796.zip
+          unzip -o sdk-tools-linux-4333796.zip
+          rm sdk-tools-linux-4333796.zip
+          echo "y" | ./sdkmanager --licenses
 
       - name: Build APK with Buildozer
         run: |
-          yes | buildozer -v android debug
+          buildozer -v android debug
 
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
