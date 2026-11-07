@@ -29,6 +29,15 @@ jobs:
           pip install buildozer
           pip install cython==0.29.33
 
+      - name: Install Android SDK Manager
+        run: |
+          mkdir -p $HOME/.buildozer/android/platform/android-sdk/tools/bin
+          cd $HOME/.buildozer/android/platform/android-sdk/tools/bin
+          curl -L -O -C - https://dl.google.com/android/repository/sdk-tools-linux-4333796.zip
+          unzip -o sdk-tools-linux-4333796.zip
+          rm sdk-tools-linux-4333796.zip
+          echo "y" | ./sdkmanager --licenses
+
       - name: Build APK with Buildozer
         run: |
           buildozer -v android debug
